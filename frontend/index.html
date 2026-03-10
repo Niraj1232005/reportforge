@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Document Formatter</title>
+
+    <style>
+      body {
+        background-color: black;
+        color: white;
+        font-family: Arial, sans-serif;
+        max-width: 700px;
+        margin: 40px auto;
+      }
+
+      textarea {
+        width: 100%;
+        height: 260px;
+        margin-top: 10px;
+        border-radius: 5%;
+        padding: 5%;
+      }
+
+      button {
+        padding: 10px 20px;
+        font-size: 16px;
+        margin-top: 10px;
+      }
+    </style>
+  </head>
+
+  <body>
+    <h1>Upload Document</h1>
+
+    <form id="uploadForm" enctype="multipart/form-data">
+      <input type="file" name="file" required /><br /><br />
+      <button type="submit">Generate Preview</button>
+    </form>
+
+    <h3>Extracted Text Preview</h3>
+
+    <textarea
+      id="preview"
+      placeholder="Extracted text will appear here..."
+      readonly
+    ></textarea>
+
+    <button onclick="downloadDocx()">Download DOCX</button>
+
+    <script>
+      const form = document.getElementById("uploadForm");
+      const preview = document.getElementById("preview");
+
+      let cachedText = null;
+
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+
+        const formData = new FormData(form);
+        preview.value = "Extracting text...";
+
+        const res = await fetch("/upload", {
+          method: "POST",
+          body: formData,
+        });
+
+        const data = await res.json();
+        cachedText = data.text;
+        preview.value = cachedText;
+      });
+
+      async function downloadDocx() {
+        if (!cachedText) {
+          alert("Please generate preview first");
+          return;
+        }
+
+        const res = await fetch("/download", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: cachedText }),
+        });
+
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "formatted_document.docx";
+        a.click();
+      }
+    </script>
+  </body>
+</html>
