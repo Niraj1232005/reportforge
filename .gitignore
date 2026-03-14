@@ -49,7 +49,7 @@ temp/
 tmp/
 
 # ============================
-# Environment variables
+# Environment variables 
 # ============================
 .env
 .env.local
