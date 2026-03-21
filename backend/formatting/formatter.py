@@ -23,9 +23,58 @@ PERCENT_PATTERN = re.compile(r"([0-9]+(?:\.[0-9]+)?)%")
 CITATION_PATTERN = re.compile(r"\[@([a-zA-Z0-9_-]+)\]")
 FOOTNOTE_PATTERN = re.compile(r"\[fn:([a-zA-Z0-9_-]+)\]")
 
+DEFAULT_DOCUMENT_SETTINGS: Dict[str, Any] = {
+    "fontFamily": "Times New Roman",
+    "bodyFontSize": 12,
+    "heading1Size": 18,
+    "heading2Size": 16,
+    "heading3Size": 14,
+    "paragraphAlign": "justify",
+    "lineSpacing": 1.5,
+}
 
-def _apply_style_font(style, size_pt: int, bold: Optional[bool] = None):
-    style.font.name = "Times New Roman"
+DEFAULT_DOCUMENT_STRUCTURE: Dict[str, Any] = {
+    "showCoverPage": False,
+    "showTableOfContents": False,
+}
+
+
+def _normalize_document_settings(value: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    source = value if isinstance(value, dict) else {}
+
+    def _number(name: str, fallback: float, minimum: float, maximum: float) -> float:
+        try:
+            return max(minimum, min(maximum, float(source.get(name, fallback))))
+        except (TypeError, ValueError):
+            return fallback
+
+    paragraph_align = str(source.get("paragraphAlign") or DEFAULT_DOCUMENT_SETTINGS["paragraphAlign"]).strip().lower()
+    if paragraph_align not in {"left", "right", "center", "justify"}:
+        paragraph_align = DEFAULT_DOCUMENT_SETTINGS["paragraphAlign"]
+
+    font_family = str(source.get("fontFamily") or DEFAULT_DOCUMENT_SETTINGS["fontFamily"]).strip() or DEFAULT_DOCUMENT_SETTINGS["fontFamily"]
+
+    return {
+        "fontFamily": font_family,
+        "bodyFontSize": _number("bodyFontSize", 12, 10, 16),
+        "heading1Size": _number("heading1Size", 18, 14, 28),
+        "heading2Size": _number("heading2Size", 16, 13, 24),
+        "heading3Size": _number("heading3Size", 14, 12, 20),
+        "paragraphAlign": paragraph_align,
+        "lineSpacing": _number("lineSpacing", 1.5, 1.0, 2.0),
+    }
+
+
+def _normalize_document_structure(value: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    source = value if isinstance(value, dict) else {}
+    return {
+        "showCoverPage": bool(source.get("showCoverPage")),
+        "showTableOfContents": bool(source.get("showTableOfContents")),
+    }
+
+
+def _apply_style_font(style, font_name: str, size_pt: int, bold: Optional[bool] = None):
+    style.font.name = font_name
     style.font.size = Pt(size_pt)
 
     if bold is not None:
@@ -33,25 +82,26 @@ def _apply_style_font(style, size_pt: int, bold: Optional[bool] = None):
 
     rpr = style._element.get_or_add_rPr()
     rfonts = rpr.get_or_add_rFonts()
-    rfonts.set(qn("w:ascii"), "Times New Roman")
-    rfonts.set(qn("w:hAnsi"), "Times New Roman")
-    rfonts.set(qn("w:eastAsia"), "Times New Roman")
+    rfonts.set(qn("w:ascii"), font_name)
+    rfonts.set(qn("w:hAnsi"), font_name)
+    rfonts.set(qn("w:eastAsia"), font_name)
 
 
-def _configure_document(doc: Document):
+def _configure_document(doc: Document, settings: Dict[str, Any]):
     section = doc.sections[0]
     section.page_width = Inches(8.27)
     section.page_height = Inches(11.69)
     section.top_margin = Inches(1)
     section.bottom_margin = Inches(1)
-    section.left_margin = Inches(1.25)
+    section.left_margin = Inches(1)
     section.right_margin = Inches(1)
 
-    _apply_style_font(doc.styles["Normal"], size_pt=12, bold=False)
-    _apply_style_font(doc.styles["Title"], size_pt=18, bold=True)
-    _apply_style_font(doc.styles["Heading 1"], size_pt=14, bold=True)
-    _apply_style_font(doc.styles["Heading 2"], size_pt=14, bold=True)
-    _apply_style_font(doc.styles["Heading 3"], size_pt=14, bold=True)
+    font_name = str(settings["fontFamily"])
+    _apply_style_font(doc.styles["Normal"], font_name, size_pt=int(settings["bodyFontSize"]), bold=False)
+    _apply_style_font(doc.styles["Title"], font_name, size_pt=int(settings["heading1Size"]) + 4, bold=True)
+    _apply_style_font(doc.styles["Heading 1"], font_name, size_pt=int(settings["heading1Size"]), bold=True)
+    _apply_style_font(doc.styles["Heading 2"], font_name, size_pt=int(settings["heading2Size"]), bold=True)
+    _apply_style_font(doc.styles["Heading 3"], font_name, size_pt=int(settings["heading3Size"]), bold=True)
 
 
 def _normalized_text(value: Any, fallback: str) -> str:
@@ -300,12 +350,25 @@ def _content_blocks(content: str) -> List[Dict[str, str]]:
     return blocks
 
 
-def _add_body_paragraph(doc: Document, text: str, indent_first_line: bool = True):
+def _paragraph_alignment(settings: Dict[str, Any]) -> int:
+    return _parse_alignment(str(settings.get("paragraphAlign") or "justify")) or WD_ALIGN_PARAGRAPH.JUSTIFY
+
+
+def _add_body_paragraph(
+    doc: Document,
+    text: str,
+    settings: Optional[Dict[str, Any]] = None,
+    indent_first_line: bool = True,
+):
+    resolved_settings = _normalize_document_settings(settings)
     paragraph = doc.add_paragraph(text if text else " ")
-    paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+    paragraph.alignment = _paragraph_alignment(resolved_settings)
     paragraph.paragraph_format.space_after = Pt(8)
-    paragraph.paragraph_format.line_spacing = 1.5
+    paragraph.paragraph_format.line_spacing = float(resolved_settings.get("lineSpacing") or 1.5)
     paragraph.paragraph_format.first_line_indent = Inches(0)
+    if paragraph.runs:
+        _set_run_font_name(paragraph.runs[0], str(resolved_settings["fontFamily"]))
+        paragraph.runs[0].font.size = Pt(float(resolved_settings["bodyFontSize"]))
     return paragraph
 
 
@@ -359,30 +422,35 @@ def _add_image(
     image_lookup: Optional[Dict[str, Any]] = None,
     max_width_inches: float = 6.0,
     requested_width_inches: Optional[float] = None,
+    alignment: str = "center",
+    settings: Optional[Dict[str, Any]] = None,
 ):
     image_stream = _resolve_image_stream(source, image_lookup=image_lookup)
+    resolved_settings = _normalize_document_settings(settings)
+    paragraph_alignment = _parse_alignment(alignment) or WD_ALIGN_PARAGRAPH.CENTER
 
     if not image_stream:
-        _add_body_paragraph(doc, f"[Image unavailable: {alt}]")
+        _add_body_paragraph(doc, f"[Image unavailable: {alt}]", resolved_settings)
         return
 
     try:
         target_width = _clamp_image_width(requested_width_inches, max_width_inches)
         doc.add_picture(image_stream, width=Inches(target_width))
         image_paragraph = doc.paragraphs[-1]
-        image_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        image_paragraph.alignment = paragraph_alignment
         image_paragraph.paragraph_format.space_after = Pt(6)
 
         caption = doc.add_paragraph(alt)
-        caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        caption.alignment = paragraph_alignment
         caption.paragraph_format.space_after = Pt(10)
         caption.paragraph_format.first_line_indent = Inches(0)
 
         if caption.runs:
+            _set_run_font_name(caption.runs[0], str(resolved_settings["fontFamily"]))
             caption.runs[0].italic = True
             caption.runs[0].font.size = Pt(10)
     except Exception:
-        _add_body_paragraph(doc, f"[Image unavailable: {alt}]")
+        _add_body_paragraph(doc, f"[Image unavailable: {alt}]", resolved_settings)
 
 
 def _add_logo(
@@ -430,7 +498,7 @@ def _extract_header_footer_blocks(blocks: List[Dict[str, Any]]):
     return filtered_blocks, header_text, footer_text
 
 
-def _set_document_header_footer(doc: Document, header_text: str, footer_text: str):
+def _set_document_header_footer(doc: Document, header_text: str, footer_text: str, settings: Dict[str, Any]):
     for section in doc.sections:
         if header_text:
             header = section.header
@@ -439,16 +507,16 @@ def _set_document_header_footer(doc: Document, header_text: str, footer_text: st
             paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
             if paragraph.runs:
                 paragraph.runs[0].font.size = Pt(10)
-                _set_run_font_name(paragraph.runs[0], "Times New Roman")
+                _set_run_font_name(paragraph.runs[0], str(settings["fontFamily"]))
 
         if footer_text:
             footer = section.footer
             paragraph = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
             paragraph.text = footer_text
-            paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
             if paragraph.runs:
                 paragraph.runs[0].font.size = Pt(10)
-                _set_run_font_name(paragraph.runs[0], "Times New Roman")
+                _set_run_font_name(paragraph.runs[0], str(settings["fontFamily"]))
 
 
 def _render_title_page(
@@ -457,12 +525,17 @@ def _render_title_page(
     title_page: Optional[Dict[str, Any]],
     image_lookup: Optional[Dict[str, Any]],
     max_width_inches: float,
+    settings: Dict[str, Any],
 ):
     title_page_data = title_page if isinstance(title_page, dict) else {}
     logo_image_id = str(title_page_data.get("logoImageId") or "").strip()
     logo_data_url = str(title_page_data.get("logoDataUrl") or title_page_data.get("logoSrc") or "").strip()
     college_name = _normalized_text(title_page_data.get("collegeName"), "College Name")
     student_name = _normalized_text(title_page_data.get("studentName"), "Student Name")
+    course = _normalized_text(title_page_data.get("course") or title_page_data.get("courseName"), "")
+    eyebrow = _normalized_text(title_page_data.get("eyebrow"), "")
+    subtitle = _normalized_text(title_page_data.get("subtitle"), "")
+    note = _normalized_text(title_page_data.get("note"), "")
     logo_width_percent = title_page_data.get("logoWidth")
 
     requested_logo_width = None
@@ -484,12 +557,21 @@ def _render_title_page(
             requested_width_inches=requested_logo_width,
         )
 
+    if eyebrow:
+        eyebrow_paragraph = doc.add_paragraph(eyebrow)
+        eyebrow_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        eyebrow_paragraph.paragraph_format.space_after = Pt(10)
+        if eyebrow_paragraph.runs:
+            _set_run_font_name(eyebrow_paragraph.runs[0], str(settings["fontFamily"]))
+            eyebrow_paragraph.runs[0].font.size = Pt(max(10, float(settings["bodyFontSize"]) - 1))
+            eyebrow_paragraph.runs[0].bold = True
+
     college = doc.add_paragraph(college_name)
     college.alignment = WD_ALIGN_PARAGRAPH.CENTER
     college.paragraph_format.space_after = Pt(8)
     if college.runs:
-        _set_run_font_name(college.runs[0], "Times New Roman")
-        college.runs[0].font.size = Pt(14)
+        _set_run_font_name(college.runs[0], str(settings["fontFamily"]))
+        college.runs[0].font.size = Pt(float(settings["heading3Size"]))
         college.runs[0].bold = True
 
     doc.add_paragraph("")
@@ -503,8 +585,33 @@ def _render_title_page(
     student = doc.add_paragraph(student_name)
     student.alignment = WD_ALIGN_PARAGRAPH.CENTER
     if student.runs:
-        _set_run_font_name(student.runs[0], "Times New Roman")
-        student.runs[0].font.size = Pt(12)
+        _set_run_font_name(student.runs[0], str(settings["fontFamily"]))
+        student.runs[0].font.size = Pt(float(settings["bodyFontSize"]))
+
+    if course:
+        doc.add_paragraph("")
+        course_para = doc.add_paragraph(course)
+        course_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        if course_para.runs:
+            _set_run_font_name(course_para.runs[0], str(settings["fontFamily"]))
+            course_para.runs[0].font.size = Pt(max(10, float(settings["bodyFontSize"]) - 1))
+
+    if subtitle:
+        subtitle_para = doc.add_paragraph(subtitle)
+        subtitle_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        subtitle_para.paragraph_format.space_before = Pt(18)
+        subtitle_para.paragraph_format.space_after = Pt(8)
+        if subtitle_para.runs:
+            _set_run_font_name(subtitle_para.runs[0], str(settings["fontFamily"]))
+            subtitle_para.runs[0].font.size = Pt(max(10, float(settings["bodyFontSize"]) - 1))
+
+    if note:
+        note_para = doc.add_paragraph(note)
+        note_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        note_para.paragraph_format.space_after = Pt(6)
+        if note_para.runs:
+            _set_run_font_name(note_para.runs[0], str(settings["fontFamily"]))
+            note_para.runs[0].font.size = Pt(max(10, float(settings["bodyFontSize"]) - 2))
 
 
 def _extract_plain_text(value: Any, fallback: str) -> str:
@@ -723,7 +830,7 @@ def tiptap_document_to_blocks(document_data: Any) -> List[Dict[str, Any]]:
     return blocks
 
 
-def _render_code_block(doc: Document, code_text: str):
+def _render_code_block(doc: Document, code_text: str, settings: Optional[Dict[str, Any]] = None):
     lines = str(code_text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
     if not lines:
         lines = [""]
@@ -741,9 +848,10 @@ def _render_code_block(doc: Document, code_text: str):
         run.font.size = Pt(10)
 
 
-def _render_table_block(doc: Document, rows: Any):
+def _render_table_block(doc: Document, rows: Any, settings: Optional[Dict[str, Any]] = None):
+    resolved_settings = _normalize_document_settings(settings)
     if not isinstance(rows, list) or not rows:
-        _add_body_paragraph(doc, "")
+        _add_body_paragraph(doc, "", resolved_settings)
         return
 
     normalized_rows: List[List[str]] = []
@@ -758,7 +866,7 @@ def _render_table_block(doc: Document, rows: Any):
         normalized_rows.append(row_values)
 
     if not normalized_rows or max_cols <= 0:
-        _add_body_paragraph(doc, "")
+        _add_body_paragraph(doc, "", resolved_settings)
         return
 
     table = doc.add_table(rows=len(normalized_rows), cols=max_cols)
@@ -774,8 +882,8 @@ def _render_table_block(doc: Document, rows: Any):
                 paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
                 paragraph.paragraph_format.space_after = Pt(0)
                 for run in paragraph.runs:
-                    _set_run_font_name(run, "Times New Roman")
-                    run.font.size = Pt(11)
+                    _set_run_font_name(run, str(resolved_settings["fontFamily"]))
+                    run.font.size = Pt(max(10, float(resolved_settings["bodyFontSize"]) - 1))
 
     doc.add_paragraph("")
 
@@ -960,11 +1068,12 @@ def _render_document_blocks(
     image_lookup: Optional[Dict[str, Any]],
     max_width_inches: float,
     comments: Optional[List[Dict[str, Any]]] = None,
+    settings: Optional[Dict[str, Any]] = None,
 ):
+    resolved_settings = _normalize_document_settings(settings)
     heading_1 = 0
     heading_2 = 0
     heading_3 = 0
-    has_rendered_first_section = False
     reference_lookup = _collect_reference_lookup(blocks)
     footnote_lookup = _collect_footnote_lookup(blocks)
 
@@ -991,10 +1100,6 @@ def _render_document_blocks(
             heading_1 += 1
             heading_2 = 0
             heading_3 = 0
-
-            if has_rendered_first_section:
-                doc.add_page_break()
-            has_rendered_first_section = True
 
             heading = doc.add_heading(f"{heading_1}. {title_text}", level=1)
             heading.alignment = WD_ALIGN_PARAGRAPH.LEFT
@@ -1050,6 +1155,7 @@ def _render_document_blocks(
                 content,
                 image_lookup=image_lookup,
                 max_width_inches=max_width_inches,
+                settings=resolved_settings,
             )
             continue
 
@@ -1061,23 +1167,25 @@ def _render_document_blocks(
                 footnote_lookup,
             )
             quote_paragraph = doc.add_paragraph(quote_text)
-            quote_paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+            quote_paragraph.alignment = _paragraph_alignment(resolved_settings)
             quote_paragraph.paragraph_format.left_indent = Inches(0.35)
             quote_paragraph.paragraph_format.right_indent = Inches(0.2)
             quote_paragraph.paragraph_format.space_after = Pt(8)
-            quote_paragraph.paragraph_format.line_spacing = 1.5
+            quote_paragraph.paragraph_format.line_spacing = float(resolved_settings["lineSpacing"])
 
             if quote_paragraph.runs:
+                _set_run_font_name(quote_paragraph.runs[0], str(resolved_settings["fontFamily"]))
+                quote_paragraph.runs[0].font.size = Pt(float(resolved_settings["bodyFontSize"]))
                 quote_paragraph.runs[0].italic = True
             continue
 
         if block_type == "code":
-            _render_code_block(doc, str(raw_block.get("code") or ""))
+            _render_code_block(doc, str(raw_block.get("code") or ""), resolved_settings)
             doc.add_paragraph("")
             continue
 
         if block_type == "table":
-            _render_table_block(doc, raw_block.get("rows"))
+            _render_table_block(doc, raw_block.get("rows"), resolved_settings)
             continue
 
         if block_type == "equation":
@@ -1092,6 +1200,7 @@ def _render_document_blocks(
         if block_type == "image":
             image_id = str(raw_block.get("imageId") or raw_block.get("image_id") or "").strip()
             image_source = str(raw_block.get("source") or "").strip()
+            image_alignment = str(raw_block.get("alignment") or "center").strip().lower()
 
             if image_id:
                 image_source = f"{IMAGE_REF_PREFIX}{image_id}"
@@ -1115,6 +1224,8 @@ def _render_document_blocks(
                 image_lookup=image_lookup,
                 max_width_inches=max_width_inches,
                 requested_width_inches=requested_width,
+                alignment=image_alignment,
+                settings=resolved_settings,
             )
             continue
 
@@ -1129,6 +1240,7 @@ def _render_document_blocks(
             fallback_content,
             image_lookup=image_lookup,
             max_width_inches=max_width_inches,
+            settings=resolved_settings,
         )
 
     _append_reference_section(doc, reference_lookup)
@@ -1199,20 +1311,24 @@ def _render_inline_nodes(paragraph, element, inherited_style: Dict[str, Any]):
             _append_text_with_style(paragraph, child.tail, inherited_style)
 
 
-def _render_list_block(doc: Document, block, ordered: bool):
+def _render_list_block(doc: Document, block, ordered: bool, settings: Optional[Dict[str, Any]] = None):
+    resolved_settings = _normalize_document_settings(settings)
     parent_style_map = _parse_style_map(block.get("style", ""))
     parent_alignment = _extract_alignment(block, parent_style_map)
 
     for item in block.xpath("./li"):
         paragraph = doc.add_paragraph(style="List Number" if ordered else "List Bullet")
         paragraph.paragraph_format.space_after = Pt(8)
-        paragraph.paragraph_format.line_spacing = 1.5
+        paragraph.paragraph_format.line_spacing = float(resolved_settings["lineSpacing"])
 
         item_styles = _parse_style_map(item.get("style", ""))
         item_alignment = _extract_alignment(item, item_styles)
         paragraph.alignment = item_alignment if item_alignment is not None else parent_alignment
 
-        base_style = {"font_name": "Times New Roman", "font_size_pt": 12.0}
+        base_style = {
+            "font_name": str(resolved_settings["fontFamily"]),
+            "font_size_pt": float(resolved_settings["bodyFontSize"]),
+        }
         _render_inline_nodes(paragraph, item, base_style)
 
         if not paragraph.runs:
@@ -1224,11 +1340,13 @@ def _render_html_block(
     block,
     image_lookup: Optional[Dict[str, Any]],
     max_width_inches: float,
+    settings: Optional[Dict[str, Any]] = None,
 ):
+    resolved_settings = _normalize_document_settings(settings)
     tag = str(block.tag).lower()
 
     if tag in {"ul", "ol"}:
-        _render_list_block(doc, block, ordered=(tag == "ol"))
+        _render_list_block(doc, block, ordered=(tag == "ol"), settings=resolved_settings)
         return
 
     if tag in {"figure", "img"}:
@@ -1242,6 +1360,7 @@ def _render_html_block(
         style_map = _parse_style_map(image_element.get("style", ""))
         width_value = style_map.get("width") or image_element.get("width", "")
         requested_width = _parse_width_inches(width_value, max_width_inches)
+        alignment_value = style_map.get("text-align") or block.get("align") or "center"
 
         caption_text = (image_element.get("alt") or "Figure").strip() or "Figure"
         if tag == "figure":
@@ -1258,6 +1377,8 @@ def _render_html_block(
             image_lookup=image_lookup,
             max_width_inches=max_width_inches,
             requested_width_inches=requested_width,
+            alignment=str(alignment_value),
+            settings=resolved_settings,
         )
         return
 
@@ -1266,18 +1387,28 @@ def _render_html_block(
         heading_level = min(max(1, heading_level), 3)
         heading = doc.add_heading("", level=heading_level)
         heading.paragraph_format.space_after = Pt(8)
-        _render_inline_nodes(heading, block, {"font_name": "Times New Roman", "font_size_pt": 12.0})
+        _render_inline_nodes(
+            heading,
+            block,
+            {
+                "font_name": str(resolved_settings["fontFamily"]),
+                "font_size_pt": float(resolved_settings[f"heading{heading_level}Size"]),
+            },
+        )
         if not heading.runs:
             heading.add_run(" ")
         return
 
-    paragraph = _add_body_paragraph(doc, "", indent_first_line=True)
+    paragraph = _add_body_paragraph(doc, "", resolved_settings, indent_first_line=True)
     style_map = _parse_style_map(block.get("style", ""))
     alignment = _extract_alignment(block, style_map)
     if alignment is not None:
         paragraph.alignment = alignment
 
-    base_style = {"font_name": "Times New Roman", "font_size_pt": 12.0}
+    base_style = {
+        "font_name": str(resolved_settings["fontFamily"]),
+        "font_size_pt": float(resolved_settings["bodyFontSize"]),
+    }
     _render_inline_nodes(paragraph, block, base_style)
     if not paragraph.runs:
         paragraph.add_run(" ")
@@ -1288,6 +1419,7 @@ def _render_html_content(
     content: str,
     image_lookup: Optional[Dict[str, Any]],
     max_width_inches: float,
+    settings: Optional[Dict[str, Any]] = None,
 ) -> bool:
     source = str(content or "").strip()
 
@@ -1302,15 +1434,21 @@ def _render_html_content(
     consumed = False
 
     if root.text and root.text.strip():
-        _add_body_paragraph(doc, root.text.strip())
+        _add_body_paragraph(doc, root.text.strip(), settings)
         consumed = True
 
     for block in root:
-        _render_html_block(doc, block, image_lookup=image_lookup, max_width_inches=max_width_inches)
+        _render_html_block(
+            doc,
+            block,
+            image_lookup=image_lookup,
+            max_width_inches=max_width_inches,
+            settings=settings,
+        )
         consumed = True
 
         if block.tail and block.tail.strip():
-            _add_body_paragraph(doc, block.tail.strip())
+            _add_body_paragraph(doc, block.tail.strip(), settings)
 
     return consumed
 
@@ -1320,16 +1458,17 @@ def _render_legacy_content(
     content: str,
     image_lookup: Optional[Dict[str, Any]] = None,
     max_width_inches: float = 6.0,
+    settings: Optional[Dict[str, Any]] = None,
 ):
     blocks = _content_blocks(content)
 
     if not blocks:
-        _add_body_paragraph(doc, "")
+        _add_body_paragraph(doc, "", settings)
         return
 
     for block in blocks:
         if block["type"] == "paragraph":
-            _add_body_paragraph(doc, block["text"])
+            _add_body_paragraph(doc, block["text"], settings)
         elif block["type"] == "image":
             _add_image(
                 doc,
@@ -1337,6 +1476,7 @@ def _render_legacy_content(
                 block["alt"],
                 image_lookup=image_lookup,
                 max_width_inches=max_width_inches,
+                settings=settings,
             )
 
 
@@ -1345,6 +1485,7 @@ def _render_content(
     content: str,
     image_lookup: Optional[Dict[str, Any]] = None,
     max_width_inches: float = 6.0,
+    settings: Optional[Dict[str, Any]] = None,
 ):
     normalized_content = str(content or "")
 
@@ -1354,6 +1495,7 @@ def _render_content(
             normalized_content,
             image_lookup=image_lookup,
             max_width_inches=max_width_inches,
+            settings=settings,
         )
         if rendered:
             return
@@ -1363,6 +1505,7 @@ def _render_content(
         normalized_content,
         image_lookup=image_lookup,
         max_width_inches=max_width_inches,
+        settings=settings,
     )
 
 
@@ -1433,9 +1576,13 @@ def create_editor_docx(
     blocks: Optional[List[Dict[str, Any]]] = None,
     comments: Optional[List[Dict[str, Any]]] = None,
     title_page: Optional[Dict[str, Any]] = None,
+    document_settings: Optional[Dict[str, Any]] = None,
+    document_structure: Optional[Dict[str, Any]] = None,
 ):
+    settings = _normalize_document_settings(document_settings)
+    structure = _normalize_document_structure(document_structure)
     doc = Document()
-    _configure_document(doc)
+    _configure_document(doc, settings)
     page = doc.sections[0]
     max_image_width = (
         page.page_width.inches - page.left_margin.inches - page.right_margin.inches
@@ -1451,19 +1598,22 @@ def create_editor_docx(
 
     valid_blocks, header_text, footer_text = _extract_header_footer_blocks(valid_blocks)
 
-    _render_title_page(
-        doc,
-        document_title=_normalized_text(document_title, "REPORT"),
-        title_page=title_page,
-        image_lookup=image_lookup,
-        max_width_inches=max_image_width,
-    )
-    doc.add_page_break()
+    if structure["showCoverPage"]:
+        _render_title_page(
+            doc,
+            document_title=_normalized_text(document_title, "REPORT"),
+            title_page=title_page,
+            image_lookup=image_lookup,
+            max_width_inches=max_image_width,
+            settings=settings,
+        )
 
-    toc_heading = doc.add_heading("Table of Contents", level=1)
-    toc_heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    add_table_of_contents(doc, heading_levels="1-3")
-    doc.add_page_break()
+    if structure["showTableOfContents"]:
+        if doc.paragraphs:
+            doc.add_page_break()
+        toc_heading = doc.add_heading("Table of Contents", level=1)
+        toc_heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        add_table_of_contents(doc, heading_levels="1-3")
 
     if isinstance(title_page, dict):
         if not header_text:
@@ -1471,8 +1621,11 @@ def create_editor_docx(
         if not footer_text:
             footer_text = _extract_plain_text(title_page.get("footerText"), "")
 
-    _set_document_header_footer(doc, header_text, footer_text)
+    _set_document_header_footer(doc, header_text, footer_text, settings)
     _apply_page_numbers(doc)
+
+    if structure["showCoverPage"] or structure["showTableOfContents"]:
+        doc.add_page_break()
 
     _render_document_blocks(
         doc,
@@ -1480,6 +1633,7 @@ def create_editor_docx(
         image_lookup=image_lookup,
         max_width_inches=max_image_width,
         comments=comments,
+        settings=settings,
     )
 
     doc.save(output_path)
@@ -1487,7 +1641,7 @@ def create_editor_docx(
 
 def create_professional_docx(structured_data, output_path):
     doc = Document()
-    _configure_document(doc)
+    _configure_document(doc, _normalize_document_settings())
     _apply_page_numbers(doc)
 
     title = doc.add_paragraph("LAB REPORT")

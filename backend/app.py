@@ -334,6 +334,8 @@ def generate_doc():
     images = data.get("images")
     comments = data.get("comments")
     title_page = data.get("titlePage")
+    document_settings = data.get("documentSettings")
+    document_structure = data.get("documentStructure")
 
     valid_blocks = [block for block in blocks if isinstance(block, dict)] if isinstance(blocks, list) else []
     if not valid_blocks and isinstance(document, dict):
@@ -342,6 +344,8 @@ def generate_doc():
     image_lookup = images if isinstance(images, dict) else {}
     valid_comments = [comment for comment in comments if isinstance(comment, dict)] if isinstance(comments, list) else []
     valid_title_page = title_page if isinstance(title_page, dict) else {}
+    valid_document_settings = document_settings if isinstance(document_settings, dict) else {}
+    valid_document_structure = document_structure if isinstance(document_structure, dict) else {}
 
     if not valid_blocks and not valid_sections:
         return jsonify({"error": "Provide a non-empty list of blocks or sections."}), 400
@@ -357,6 +361,8 @@ def generate_doc():
         image_lookup=image_lookup,
         comments=valid_comments if valid_comments else None,
         title_page=valid_title_page if valid_title_page else None,
+        document_settings=valid_document_settings if valid_document_settings else None,
+        document_structure=valid_document_structure if valid_document_structure else None,
     )
 
     return send_file(
@@ -391,6 +397,10 @@ def upload_docx():
         "title": title or Path(file.filename).stem.replace("_", " "),
         "blocks": blocks,
         "document": _blocks_to_tiptap_doc(blocks),
+        "documentStructure": {
+            "showCoverPage": False,
+            "showTableOfContents": False,
+        },
         "titlePage": {
             "collegeName": "College Name",
             "studentName": "Student Name",
