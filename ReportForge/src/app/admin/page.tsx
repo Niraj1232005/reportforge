@@ -1,8 +1,10 @@
 "use client";
 
-import { motion } from "framer-motion";
-import { Edit3, GripVertical, Plus, Save, ShieldCheck, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Edit3, GripVertical, Plus, Save, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import ProtectedRoute from "@/components/ProtectedRoute";
+import { useAuth } from "@/components/AuthProvider";
+import { useToast } from "@/components/ToastProvider";
 import {
   DEFAULT_DOCUMENT_SETTINGS,
   DEFAULT_FONT_LIBRARY,
@@ -26,8 +28,6 @@ import type {
   TemplateStructureSection,
   TemplateStyleSettings,
 } from "@/types/editor";
-
-const ADMIN_SESSION_KEY = "reportforge_admin_unlocked";
 
 interface BuilderSubsection {
   id: string;
@@ -159,9 +159,8 @@ const structureFromBuilder = (
 };
 
 export default function AdminPage() {
-  const [password, setPassword] = useState("");
-  const [unlocked, setUnlocked] = useState(false);
-  const [authError, setAuthError] = useState<string | null>(null);
+  const { isAdmin, user } = useAuth();
+  const { showToast } = useToast();
   const [templates, setTemplates] = useState<TemplateRow[]>([]);
   const [loadingTemplates, setLoadingTemplates] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -180,11 +179,7 @@ export default function AdminPage() {
   const [newFontName, setNewFontName] = useState("");
   const [draggingSectionId, setDraggingSectionId] = useState<string | null>(null);
 
-  const expectedPassword = useMemo(() => {
-    return process.env.NEXT_PUBLIC_ADMIN_PASSWORD ?? "ADMIN_SESSION_KEY";
-  }, []);
-
-  const loadTemplates = async () => {
+  const loadTemplates = useCallback(async () => {
     setLoadingTemplates(true);
     setFormError(null);
 
@@ -194,24 +189,27 @@ export default function AdminPage() {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to load templates";
       setFormError(message);
+      showToast({
+        title: "Template loading failed",
+        description: message,
+        variant: "error",
+      });
     } finally {
       setLoadingTemplates(false);
     }
-  };
+  }, [showToast]);
 
   useEffect(() => {
-    const unlockedSession = window.sessionStorage.getItem(ADMIN_SESSION_KEY) === "true";
-    setUnlocked(unlockedSession);
     setFontLibrary(normalizeFontLibrary(readFontLibraryFromStorage()));
   }, []);
 
   useEffect(() => {
-    if (!unlocked) {
+    if (!isAdmin || !user) {
       return;
     }
 
     void loadTemplates();
-  }, [unlocked]);
+  }, [isAdmin, loadTemplates, user]);
 
   const resetForm = () => {
     setEditingTemplateId(null);
@@ -222,18 +220,6 @@ export default function AdminPage() {
     setStyle({ ...defaultStyleSettings });
     setCoverFields(defaultCoverFields);
     setCoverTemplate(defaultCoverTemplate);
-  };
-
-  const handleUnlock = () => {
-    if (password !== expectedPassword) {
-      setAuthError("Incorrect admin password.");
-      return;
-    }
-
-    window.sessionStorage.setItem(ADMIN_SESSION_KEY, "true");
-    setUnlocked(true);
-    setAuthError(null);
-    setPassword("");
   };
 
   const handleAddFont = () => {
@@ -400,6 +386,11 @@ export default function AdminPage() {
           structure: structurePayload,
         });
         setFormMessage("Template updated.");
+        showToast({
+          title: "Template updated",
+          description: `${name.trim()} was saved successfully.`,
+          variant: "success",
+        });
       } else {
         await createTemplateInDb({
           name: name.trim(),
@@ -407,6 +398,11 @@ export default function AdminPage() {
           structure: structurePayload,
         });
         setFormMessage("Template created.");
+        showToast({
+          title: "Template created",
+          description: `${name.trim()} is ready to use.`,
+          variant: "success",
+        });
       }
 
       resetForm();
@@ -414,6 +410,11 @@ export default function AdminPage() {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to save template";
       setFormError(message);
+      showToast({
+        title: "Save failed",
+        description: message,
+        variant: "error",
+      });
     } finally {
       setIsSubmitting(false);
     }
@@ -445,6 +446,11 @@ export default function AdminPage() {
     try {
       await deleteTemplateFromDb(templateId);
       setFormMessage("Template deleted.");
+      showToast({
+        title: "Template deleted",
+        description: "The template was removed.",
+        variant: "success",
+      });
       await loadTemplates();
 
       if (editingTemplateId === templateId) {
@@ -453,50 +459,22 @@ export default function AdminPage() {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to delete template";
       setFormError(message);
+      showToast({
+        title: "Delete failed",
+        description: message,
+        variant: "error",
+      });
     }
   };
 
-  if (!unlocked) {
-    return (
-      <main className="px-6 py-12 md:px-10 bg-white">
-        <div className="mx-auto max-w-xl">
-          <motion.section
-            initial={{ opacity: 0, y: 14 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.25 }}
-            className="rounded-2xl border border-slate-200 bg-white px-8 py-9 shadow-sm"
-          >
-            <div className="mb-4 inline-flex rounded-xl bg-slate-100 p-2 text-slate-700">
-              <ShieldCheck className="h-5 w-5" />
-            </div>
-            <h1 className="mb-2 text-2xl font-semibold text-slate-900">Admin Panel</h1>
-            <p className="mb-5 text-sm text-slate-600">
-              Enter the admin password to manage templates.
-            </p>
-            <input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              placeholder="Admin password"
-              className="mb-3 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
-            />
-            {authError ? <p className="mb-3 text-sm text-red-600">{authError}</p> : null}
-            <button
-              type="button"
-              onClick={handleUnlock}
-              className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
-            >
-              Unlock Admin
-            </button>
-          </motion.section>
-        </div>
-      </main>
-    );
-  }
-
   return (
-    <main className="px-6 pb-12 pt-10 md:px-10 bg-white">
-      <div className="mx-auto max-w-7xl">
+    <ProtectedRoute
+      requireAdmin
+      loginTitle="Login to manage templates"
+      loginMessage="Only the configured admin account can access template management."
+    >
+      <main className="bg-white px-6 pb-12 pt-10 md:px-10">
+        <div className="mx-auto max-w-7xl">
         <header className="mb-7">
           <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
             Admin
@@ -974,7 +952,21 @@ export default function AdminPage() {
 
           <section className="rounded-2xl border border-slate-200 bg-slate-50 p-5 shadow-sm">
             <h2 className="mb-4 text-lg font-semibold text-slate-900">Existing Templates</h2>
-            {loadingTemplates ? <p className="text-sm text-slate-600">Loading templates...</p> : null}
+            {loadingTemplates ? (
+              <div className="space-y-3">
+                {Array.from({ length: 3 }).map((_, index) => (
+                  <div
+                    key={`admin-template-skeleton-${index}`}
+                    className="animate-pulse rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+                  >
+                    <div className="h-3 w-20 rounded-lg bg-slate-200" />
+                    <div className="mt-3 h-5 w-2/3 rounded-lg bg-slate-200" />
+                    <div className="mt-2 h-4 w-full rounded-lg bg-slate-200" />
+                    <div className="mt-4 h-16 rounded-xl bg-slate-100" />
+                  </div>
+                ))}
+              </div>
+            ) : null}
 
             {!loadingTemplates && templates.length === 0 ? (
               <p className="text-sm text-slate-600">No templates found.</p>
@@ -1041,7 +1033,8 @@ export default function AdminPage() {
             </div>
           </section>
         </div>
-      </div>
-    </main>
+        </div>
+      </main>
+    </ProtectedRoute>
   );
 }

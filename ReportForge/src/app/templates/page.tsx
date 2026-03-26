@@ -4,10 +4,12 @@ import { motion } from "framer-motion";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import TemplateCard from "@/components/TemplateCard";
+import { useToast } from "@/components/ToastProvider";
 import { fetchTemplatesFromSource } from "@/lib/template-service";
 import type { ReportTemplate } from "@/types/editor";
 
 export default function TemplatesPage() {
+  const { showToast } = useToast();
   const [templates, setTemplates] = useState<ReportTemplate[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -26,7 +28,13 @@ export default function TemplatesPage() {
         }
       } catch (error) {
         if (!cancelled) {
-          setLoadError(error instanceof Error ? error.message : "Unable to load templates");
+          const message = error instanceof Error ? error.message : "Unable to load templates";
+          setLoadError(message);
+          showToast({
+            title: "Template loading failed",
+            description: message,
+            variant: "error",
+          });
         }
       } finally {
         if (!cancelled) {
@@ -40,7 +48,7 @@ export default function TemplatesPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [showToast]);
 
   return (
     <main className="px-4 pb-16 pt-10 md:px-8 lg:px-10">
@@ -74,8 +82,31 @@ export default function TemplatesPage() {
         </motion.header>
 
         {isLoading ? (
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-600 shadow-sm dark:border-slate-800 dark:bg-slate-950 dark:text-slate-400">
-            Loading templates...
+          <div className="grid gap-6 xl:grid-cols-2">
+            {Array.from({ length: 4 }).map((_, index) => (
+              <div
+                key={`template-skeleton-${index}`}
+                className="overflow-hidden rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-950"
+              >
+                <div className="animate-pulse space-y-5">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="h-12 w-12 rounded-xl bg-slate-200 dark:bg-slate-800" />
+                    <div className="h-6 w-24 rounded-full bg-slate-200 dark:bg-slate-800" />
+                  </div>
+                  <div className="space-y-3">
+                    <div className="h-8 w-2/3 rounded-xl bg-slate-200 dark:bg-slate-800" />
+                    <div className="h-4 w-full rounded-lg bg-slate-200 dark:bg-slate-800" />
+                    <div className="h-4 w-5/6 rounded-lg bg-slate-200 dark:bg-slate-800" />
+                  </div>
+                  <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900">
+                    <div className="h-4 w-28 rounded-lg bg-slate-200 dark:bg-slate-800" />
+                    <div className="h-10 rounded-xl bg-slate-200 dark:bg-slate-800" />
+                    <div className="h-10 rounded-xl bg-slate-200 dark:bg-slate-800" />
+                    <div className="h-10 rounded-xl bg-slate-200 dark:bg-slate-800" />
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         ) : null}
 

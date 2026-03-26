@@ -4,6 +4,7 @@ from pathlib import Path
 import os
 from html import escape
 import re
+import requests
 
 from services.extract_pdf import extract_pdf_text
 from services.extract_docx import extract_docx_text
@@ -18,17 +19,41 @@ from docx.oxml.table import CT_Tbl
 from docx.oxml.text.paragraph import CT_P
 from docx.table import Table
 from docx.text.paragraph import Paragraph
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    def load_dotenv(*_args, **_kwargs):
+        return False
 
+BASE_DIR = Path(__file__).resolve().parent
+
+load_dotenv(BASE_DIR / ".env")
+load_dotenv(BASE_DIR.parent / "ReportForge" / ".env.local", override=False)
+
+
+def _split_origins(value: str):
+    return [origin.strip() for origin in value.split(",") if origin.strip()]
+
+
+frontend_origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+frontend_origins.extend(
+    _split_origins(
+        os.getenv("FRONTEND_ORIGINS")
+        or os.getenv("NEXT_PUBLIC_SITE_URL")
+        or ""
+    )
+)
 
 app = Flask(__name__, static_folder="../frontend")
 CORS(
     app,
-    origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    origins=frontend_origins,
     methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type"],
 )
-
-BASE_DIR = Path(__file__).resolve().parent
 
 UPLOAD_DIR = BASE_DIR / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
@@ -38,6 +63,10 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 
 ALLOWED_EXTENSIONS = {"pdf", "docx", "txt", "jpg", "jpeg", "png"}
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
+SUPABASE_URL = os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL") or ""
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or ""
+DEMO_EMAIL = "demo@reportforge.app"
+DEMO_PASSWORD = "demo1234"
 
 
 def _iter_docx_blocks(document: DocxDocument):
@@ -240,6 +269,96 @@ def _blocks_to_tiptap_doc(blocks):
     return {"type": "doc", "content": content}
 
 
+def _supabase_admin_headers():
+    return {
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+        "Content-Type": "application/json",
+    }
+
+
+def _supabase_admin_url(path: str = ""):
+    return f"{SUPABASE_URL.rstrip('/')}/auth/v1/admin/users{path}"
+
+
+def _extract_supabase_error(response):
+    try:
+        payload = response.json()
+    except Exception:
+        payload = {}
+
+    message = (
+        payload.get("msg")
+        or payload.get("message")
+        or payload.get("error_description")
+        or payload.get("error")
+        or response.text
+        or "Supabase request failed."
+    )
+    return str(message).strip()
+
+
+def _find_supabase_user_by_email(email: str):
+    response = requests.get(
+        _supabase_admin_url(),
+        headers=_supabase_admin_headers(),
+        params={"page": 1, "per_page": 200},
+        timeout=10,
+    )
+
+    if not response.ok:
+        raise RuntimeError(_extract_supabase_error(response))
+
+    payload = response.json() if response.content else {}
+    users = payload.get("users") if isinstance(payload, dict) else []
+
+    for user in users or []:
+        if str(user.get("email") or "").strip().lower() == email.lower():
+            return user
+
+    return None
+
+
+def _ensure_demo_user():
+    create_payload = {
+        "email": DEMO_EMAIL,
+        "password": DEMO_PASSWORD,
+        "email_confirm": True,
+        "user_metadata": {
+            "full_name": "Demo Recruiter",
+            "is_demo": True,
+        },
+    }
+
+    create_response = requests.post(
+        _supabase_admin_url(),
+        headers=_supabase_admin_headers(),
+        json=create_payload,
+        timeout=10,
+    )
+
+    if create_response.ok:
+        return
+
+    create_error = _extract_supabase_error(create_response)
+    if "already registered" not in create_error.lower() and "already exists" not in create_error.lower():
+        raise RuntimeError(create_error)
+
+    existing_user = _find_supabase_user_by_email(DEMO_EMAIL)
+    if not existing_user or not existing_user.get("id"):
+        raise RuntimeError("The demo account exists but could not be updated.")
+
+    update_response = requests.put(
+        _supabase_admin_url(f"/{existing_user['id']}"),
+        headers=_supabase_admin_headers(),
+        json=create_payload,
+        timeout=10,
+    )
+
+    if not update_response.ok:
+        raise RuntimeError(_extract_supabase_error(update_response))
+
+
 @app.route("/")
 def home():
     return send_from_directory("../frontend", "index.html")
@@ -248,6 +367,19 @@ def home():
 @app.route("/<path:filename>")
 def static_files(filename):
     return send_from_directory("../frontend", filename)
+
+
+@app.route("/auth/demo-user", methods=["POST"])
+def ensure_demo_user():
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        return jsonify({"error": "Supabase admin credentials are not configured."}), 503
+
+    try:
+        _ensure_demo_user()
+    except Exception as error:
+        return jsonify({"error": str(error)}), 500
+
+    return jsonify({"status": "ready"}), 200
 
 
 def allowed_file(filename: str) -> bool:
@@ -411,4 +543,5 @@ def upload_docx():
     })
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)

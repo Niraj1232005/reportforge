@@ -14,6 +14,16 @@ import type {
   TemplateStructureSection,
 } from "@/types/editor";
 
+const TEMPLATE_FIELDS = "id, name, description, structure, created_at";
+const TEMPLATE_CACHE_TTL_MS = 60_000;
+
+let templateCache: ReportTemplate[] | null = null;
+let templateRowsCache: TemplateRow[] | null = null;
+let templateCacheExpiresAt = 0;
+let templateRowsCacheExpiresAt = 0;
+let templateCachePromise: Promise<ReportTemplate[]> | null = null;
+let templateRowsPromise: Promise<TemplateRow[]> | null = null;
+
 const slugify = (value: string) => {
   return value
     .toLowerCase()
@@ -105,6 +115,33 @@ const normalizeSections = (structure: TemplateStructure): ReportSection[] => {
   }, []);
 };
 
+const cacheTemplates = (templates: ReportTemplate[]) => {
+  templateCache = templates;
+  templateCacheExpiresAt = Date.now() + TEMPLATE_CACHE_TTL_MS;
+};
+
+const cacheTemplateRows = (rows: TemplateRow[]) => {
+  templateRowsCache = rows;
+  templateRowsCacheExpiresAt = Date.now() + TEMPLATE_CACHE_TTL_MS;
+};
+
+const hasFreshTemplateCache = () => {
+  return Boolean(templateCache && Date.now() < templateCacheExpiresAt);
+};
+
+const hasFreshTemplateRowCache = () => {
+  return Boolean(templateRowsCache && Date.now() < templateRowsCacheExpiresAt);
+};
+
+export const clearTemplateCache = () => {
+  templateCache = null;
+  templateRowsCache = null;
+  templateCacheExpiresAt = 0;
+  templateRowsCacheExpiresAt = 0;
+  templateCachePromise = null;
+  templateRowsPromise = null;
+};
+
 export const templateToStructure = (template: ReportTemplate): TemplateStructure => {
   return {
     name: template.name,
@@ -154,29 +191,60 @@ export const rowToTemplate = (row: TemplateRow): ReportTemplate => {
 };
 
 export const fetchTemplatesFromSource = async (): Promise<ReportTemplate[]> => {
-  if (!isSupabaseConfigured || !supabase) {
-    return getTemplates();
+  if (hasFreshTemplateCache() && templateCache) {
+    return templateCache;
   }
 
-  const { data, error } = await supabase
-    .from("templates")
-    .select("id, name, description, structure, created_at")
-    .order("created_at", { ascending: false });
-
-  if (error || !data?.length) {
-    return getTemplates();
+  if (templateCachePromise) {
+    return templateCachePromise;
   }
 
-  return data.map((row) => rowToTemplate(row as TemplateRow));
+  templateCachePromise = (async () => {
+    if (!isSupabaseConfigured || !supabase) {
+      const fallbackTemplates = getTemplates();
+      cacheTemplates(fallbackTemplates);
+      return fallbackTemplates;
+    }
+
+    const { data, error } = await supabase
+      .from("templates")
+      .select(TEMPLATE_FIELDS)
+      .order("created_at", { ascending: false });
+
+    if (error || !data?.length) {
+      const fallbackTemplates = getTemplates();
+      cacheTemplates(fallbackTemplates);
+      return fallbackTemplates;
+    }
+
+    const templates = data.map((row) => rowToTemplate(row as TemplateRow));
+    cacheTemplates(templates);
+    return templates;
+  })().finally(() => {
+    templateCachePromise = null;
+  });
+
+  return templateCachePromise;
 };
 
 export const fetchTemplateByIdFromSource = async (
   templateId: string
 ): Promise<ReportTemplate | null> => {
+  if (!templateId) {
+    return null;
+  }
+
+  const templates = await fetchTemplatesFromSource();
+  const cachedTemplate = templates.find((template) => template.id === templateId);
+
+  if (cachedTemplate) {
+    return cachedTemplate;
+  }
+
   if (isSupabaseConfigured && supabase) {
     const { data, error } = await supabase
       .from("templates")
-      .select("id, name, description, structure, created_at")
+      .select(TEMPLATE_FIELDS)
       .eq("id", templateId)
       .maybeSingle();
 
@@ -189,26 +257,44 @@ export const fetchTemplateByIdFromSource = async (
 };
 
 export const fetchTemplateRowsForAdmin = async (): Promise<TemplateRow[]> => {
-  if (!isSupabaseConfigured || !supabase) {
-    return getTemplates().map((template) => ({
-      id: template.id,
-      name: template.name,
-      description: template.description,
-      structure: templateToStructure(template),
-      created_at: undefined,
-    }));
+  if (hasFreshTemplateRowCache() && templateRowsCache) {
+    return templateRowsCache;
   }
 
-  const { data, error } = await supabase
-    .from("templates")
-    .select("id, name, description, structure, created_at")
-    .order("created_at", { ascending: false });
-
-  if (error) {
-    throw new Error(error.message);
+  if (templateRowsPromise) {
+    return templateRowsPromise;
   }
 
-  return (data ?? []) as TemplateRow[];
+  templateRowsPromise = (async () => {
+    if (!isSupabaseConfigured || !supabase) {
+      const fallbackRows = getTemplates().map((template) => ({
+        id: template.id,
+        name: template.name,
+        description: template.description,
+        structure: templateToStructure(template),
+        created_at: undefined,
+      }));
+      cacheTemplateRows(fallbackRows);
+      return fallbackRows;
+    }
+
+    const { data, error } = await supabase
+      .from("templates")
+      .select(TEMPLATE_FIELDS)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    const rows = (data ?? []) as TemplateRow[];
+    cacheTemplateRows(rows);
+    return rows;
+  })().finally(() => {
+    templateRowsPromise = null;
+  });
+
+  return templateRowsPromise;
 };
 
 export const createTemplateInDb = async (
@@ -223,6 +309,8 @@ export const createTemplateInDb = async (
   if (error) {
     throw new Error(error.message);
   }
+
+  clearTemplateCache();
 };
 
 export const updateTemplateInDb = async (
@@ -238,6 +326,8 @@ export const updateTemplateInDb = async (
   if (error) {
     throw new Error(error.message);
   }
+
+  clearTemplateCache();
 };
 
 export const deleteTemplateFromDb = async (templateId: string) => {
@@ -250,6 +340,8 @@ export const deleteTemplateFromDb = async (templateId: string) => {
   if (error) {
     throw new Error(error.message);
   }
+
+  clearTemplateCache();
 };
 
 export const getTemplateStructureExample = (): TemplateStructure => {

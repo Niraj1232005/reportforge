@@ -4,11 +4,14 @@
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { ArrowLeft, Download, PanelLeftClose, Sparkles } from "lucide-react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, usePathname } from "next/navigation";
 import { Group, Panel, Separator } from "react-resizable-panels";
+import { useAuth } from "@/components/AuthProvider";
 import BlockEditor from "@/components/BlockEditor";
 import OutlinePanel from "@/components/OutlinePanel";
 import PreviewPane from "@/components/PreviewPane";
+import ProtectedRoute from "@/components/ProtectedRoute";
+import { useToast } from "@/components/ToastProvider";
 import { createBlock, createNodeId, extractOutline, templateSectionsToBlocks } from "@/lib/block-utils";
 import { documentBlocksToBackend } from "@/lib/blocks-to-backend";
 import { DEFAULT_DOCUMENT_STRUCTURE_SETTINGS, normalizeDocumentStructureSettings } from "@/lib/document-config";
@@ -41,6 +44,14 @@ const DEFAULT_TITLE_PAGE: TitlePageState = {
   footerText: "",
 };
 
+const ensureDocumentBlocks = (value: unknown): DocumentBlock[] => {
+  if (Array.isArray(value) && value.length) {
+    return value.filter(Boolean) as DocumentBlock[];
+  }
+
+  return [createBlock("paragraph")];
+};
+
 function dataUrlToReportImage(dataUrl: string, id: string): ReportImage {
   const [header, base64] = dataUrl.split(",", 2);
   const mimeMatch = header.match(/data:([^;]+);/);
@@ -68,7 +79,10 @@ const ResizeHandle = () => (
 
 export default function EditorPage() {
   const params = useParams<{ templateId: string }>();
+  const pathname = usePathname();
   const templateId = Array.isArray(params?.templateId) ? params.templateId[0] : params?.templateId;
+  const { loading: authLoading, requireAuth, user } = useAuth();
+  const { showToast } = useToast();
   const backendBaseUrl = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:5000";
   const editorPanelRef = useRef<HTMLDivElement | null>(null);
   const logoInputRef = useRef<HTMLInputElement | null>(null);
@@ -104,43 +118,67 @@ export default function EditorPage() {
   }, []);
 
   useEffect(() => {
+    if (!authLoading && !user) {
+      requireAuth({
+        redirectTo: pathname,
+        title: "Login to open the editor",
+        message: "Sign in to load and export report templates.",
+      });
+    }
+  }, [authLoading, pathname, requireAuth, user]);
+
+  useEffect(() => {
     let cancelled = false;
     const run = async () => {
-      if (!templateId) return;
+      if (!templateId || !user || authLoading) return;
       setIsLoading(true);
+      setLoadError(null);
       try {
         const template = await fetchTemplateByIdFromSource(templateId);
-        if (!template || cancelled) return;
+        if (!template) {
+          throw new Error("Template not found.");
+        }
+        if (cancelled) return;
         let nextTitle = template.name;
         let nextTitlePage = { ...DEFAULT_TITLE_PAGE, eyebrow: template.coverTemplate?.eyebrow || "", subtitle: template.coverTemplate?.subtitle || "", note: template.coverTemplate?.note || "" };
-        let nextBlocks = templateSectionsToBlocks(template.sections);
+        let nextBlocks = ensureDocumentBlocks(templateSectionsToBlocks(template.sections));
         let nextImages: Record<string, ReportImage> = {};
         let nextDocumentSettings = normalizeDocumentSettings(template.style ?? DEFAULT_DOCUMENT_SETTINGS);
-        let nextDocumentStructure = DEFAULT_DOCUMENT_STRUCTURE_SETTINGS;
+        let nextDocumentStructure = normalizeDocumentStructureSettings(DEFAULT_DOCUMENT_STRUCTURE_SETTINGS);
         const saved = window.localStorage.getItem(storageKey);
         if (saved) {
           try {
             const parsed = JSON.parse(saved) as { title?: string; titlePage?: Partial<TitlePageState>; blocks?: DocumentBlock[]; images?: Record<string, ReportImage>; documentSettings?: Partial<DocumentStyleSettings>; documentStructure?: Partial<DocumentStructureSettings>; compactMode?: boolean; collapsedBlockIds?: string[]; };
             if (parsed.title) nextTitle = parsed.title;
             if (parsed.titlePage) nextTitlePage = { ...nextTitlePage, ...parsed.titlePage };
-            if (parsed.blocks?.length) nextBlocks = parsed.blocks;
+            if (Array.isArray(parsed.blocks)) nextBlocks = ensureDocumentBlocks(parsed.blocks);
             if (parsed.images) nextImages = parsed.images;
             if (parsed.documentSettings) nextDocumentSettings = normalizeDocumentSettings(parsed.documentSettings);
             if (parsed.documentStructure) nextDocumentStructure = normalizeDocumentStructureSettings(parsed.documentStructure);
             setCompactMode(Boolean(parsed.compactMode));
             setCollapsedBlockIds(Array.isArray(parsed.collapsedBlockIds) ? parsed.collapsedBlockIds : []);
-          } catch {}
+          } catch {
+            window.localStorage.removeItem(storageKey);
+          }
         }
         setDocumentTitle(nextTitle);
         setTitlePage(nextTitlePage);
-        setBlocks(nextBlocks);
+        setBlocks(ensureDocumentBlocks(nextBlocks));
         setImages(nextImages);
         setDocumentSettings(nextDocumentSettings);
         setDocumentStructure(nextDocumentStructure);
         setFontFamilies(normalizeFontLibrary([...(template.fonts ?? []), ...readFontLibraryFromStorage()]));
         setActiveBlockId(nextBlocks[0]?.id ?? null);
       } catch (error) {
-        if (!cancelled) setLoadError(error instanceof Error ? error.message : "Unable to load template.");
+        if (!cancelled) {
+          const message = error instanceof Error ? error.message : "Unable to load template.";
+          setLoadError(message);
+          showToast({
+            title: "Editor loading failed",
+            description: message,
+            variant: "error",
+          });
+        }
       } finally {
         if (!cancelled) setIsLoading(false);
       }
@@ -149,7 +187,7 @@ export default function EditorPage() {
     return () => {
       cancelled = true;
     };
-  }, [storageKey, templateId]);
+  }, [authLoading, showToast, storageKey, templateId, user]);
 
   useEffect(() => {
     if (isLoading) return;
@@ -164,16 +202,27 @@ export default function EditorPage() {
   }, [scrollToBlock]);
 
   const handleExportDocx = useCallback(async () => {
+    if (!requireAuth({
+      redirectTo: pathname,
+      title: "Login to export your report",
+      message: "Sign in before exporting a DOCX file.",
+    })) {
+      return;
+    }
+
     setIsExporting(true);
     setActionError(null);
     try {
-      const { blocks: backendBlocks, images: imageLookup } = documentBlocksToBackend(blocks, images, titlePage);
+      const safeBlocks = ensureDocumentBlocks(blocks);
+      const { blocks: backendBlocks, images: imageLookup } = documentBlocksToBackend(safeBlocks, images, titlePage);
       const response = await fetch(`${backendBaseUrl}/generate-doc`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title: documentTitle || "Report", blocks: backendBlocks, images: imageLookup, titlePage: { collegeName: titlePage.collegeName, studentName: titlePage.studentName, course: titlePage.courseName || undefined, logoDataUrl: titlePage.logoDataUrl || undefined, logoWidth: 40, eyebrow: titlePage.eyebrow || undefined, subtitle: titlePage.subtitle || undefined, note: titlePage.note || undefined, headerText: titlePage.headerText || undefined, footerText: titlePage.footerText || undefined }, documentSettings, documentStructure }),
       });
-      if (!response.ok) throw new Error("Export DOCX failed.");
+      if (!response.ok) {
+        throw new Error("Export DOCX failed.");
+      }
       const blob = await response.blob();
       const blobUrl = window.URL.createObjectURL(blob);
       const anchor = window.document.createElement("a");
@@ -184,11 +233,22 @@ export default function EditorPage() {
       anchor.remove();
       window.URL.revokeObjectURL(blobUrl);
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Export DOCX failed.");
+      const message =
+        error instanceof Error && /failed to fetch/i.test(error.message)
+          ? "Unable to reach the export service. Check the backend connection and try again."
+          : error instanceof Error
+            ? error.message
+            : "Export DOCX failed.";
+      setActionError(message);
+      showToast({
+        title: "Export failed",
+        description: message,
+        variant: "error",
+      });
     } finally {
       setIsExporting(false);
     }
-  }, [backendBaseUrl, blocks, documentSettings, documentStructure, documentTitle, images, titlePage]);
+  }, [backendBaseUrl, blocks, documentSettings, documentStructure, documentTitle, images, pathname, requireAuth, showToast, titlePage]);
 
   const updateBlocks = (updater: (previous: DocumentBlock[]) => DocumentBlock[]) => setBlocks(updater);
   const handleInsertBlockAfter = useCallback((afterId: string | null, type: DocumentBlock["type"]) => {
@@ -255,10 +315,14 @@ export default function EditorPage() {
 
   const editorNode = <BlockEditor blocks={blocks} images={images} documentSettings={documentSettings} fontFamilies={fontFamilies} commentsByBlock={commentsByBlock} citationKeys={citationKeys} footnoteKeys={footnoteKeys} activeBlockId={activeBlockId} compactMode={compactMode} collapsedBlockIds={collapsedBlockIds} collapsed={false} onToggleCollapse={() => {}} onToggleBlockCollapse={handleToggleBlockCollapse} onSetActiveBlock={setActiveAndScroll} onInsertBlockAfter={handleInsertBlockAfter} onTransformBlock={handleTransformBlock} onDeleteBlock={handleDeleteBlock} onDuplicateBlock={handleDuplicateBlock} onReorderBlocks={handleReorderBlocks} onUpdateRichBlock={handleUpdateRichBlock} onUpdateCodeBlock={handleUpdateCodeBlock} onUpdateTableCell={handleUpdateTableCell} onAddTableRow={handleAddTableRow} onAddTableColumn={handleAddTableColumn} onDeleteTableRow={handleDeleteTableRow} onDeleteTableColumn={handleDeleteTableColumn} onAttachImageToBlock={handleAttachImageToBlock} onInsertImageAfter={handleInsertImageAfter} onUpdateImageWidth={handleUpdateImageWidth} onUpdateImageAlignment={handleUpdateImageAlignment} onUpdateImageCaption={handleUpdateImageCaption} onClearImageBlock={handleClearImageBlock} onUpdateEquationBlock={handleUpdateEquationBlock} onUpdateReferenceBlock={handleUpdateReferenceBlock} onUpdateFootnoteBlock={handleUpdateFootnoteBlock} onAddComment={() => {}} onDeleteComment={() => {}} onToggleCommentResolved={() => {}} />;
   return (
-    <>
-      <main className="px-4 pb-4 pt-4 md:px-6">
-        <div className="mx-auto max-w-[1800px]">
-          <section className="flex h-[calc(100vh-5.5rem)] min-h-[720px] flex-col gap-4">
+    <ProtectedRoute
+      loginTitle="Login to open the editor"
+      loginMessage="Sign in to load, edit, and export your reports."
+    >
+      <>
+        <main className="px-4 pb-4 pt-4 md:px-6">
+          <div className="mx-auto max-w-[1800px]">
+            <section className="flex h-[calc(100vh-5.5rem)] min-h-[720px] flex-col gap-4">
             <header className="surface-card sticky top-0 z-30 overflow-hidden dark:bg-slate-950">
               <div className="border-b border-slate-200 px-4 py-4 dark:border-slate-800">
                 <div className="flex flex-wrap items-center gap-3">
@@ -291,10 +355,11 @@ export default function EditorPage() {
                 <Panel defaultSize={30} minSize={22}><PreviewPane blocks={blocks} images={imagesWithLogo} commentsByBlock={commentsByBlock} documentTitle={documentTitle} titlePage={titlePageForPreview} documentSettings={documentSettings} documentStructure={documentStructure} headerText={titlePage.headerText || undefined} footerText={titlePage.footerText || undefined} activeBlockId={activeBlockId} onSetActiveBlock={setActiveAndScroll} onUpdateRichBlock={handleUpdateRichBlock} onUpdateTableCell={handleUpdateTableCell} onToggleFullscreen={() => setIsPreviewFullscreen(true)} onExportDocx={handleExportDocx} /></Panel>
               </Group>
             </div>
-          </section>
-        </div>
-      </main>
-      {isPreviewFullscreen ? <div className="fixed inset-0 z-[120] bg-slate-950/60 backdrop-blur-sm"><div className="flex h-full"><div className={`relative h-full border-r border-slate-800 bg-slate-950/96 transition-all duration-300 ${isPreviewDrawerOpen ? "w-[28rem] p-4" : "w-14 p-2"}`}><button type="button" onClick={() => setIsPreviewDrawerOpen((current) => !current)} className="mb-3 inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700 bg-slate-900 text-slate-200 transition hover:bg-slate-800" aria-label={isPreviewDrawerOpen ? "Hide slide editor" : "Show slide editor"}><PanelLeftClose className={`h-4 w-4 transition ${isPreviewDrawerOpen ? "" : "rotate-180"}`} /></button>{isPreviewDrawerOpen ? <div className="h-[calc(100%-3.25rem)] min-h-0">{editorNode}</div> : null}</div><div className="min-h-0 flex-1 p-4"><PreviewPane blocks={blocks} images={imagesWithLogo} commentsByBlock={commentsByBlock} documentTitle={documentTitle} titlePage={titlePageForPreview} documentSettings={documentSettings} documentStructure={documentStructure} headerText={titlePage.headerText || undefined} footerText={titlePage.footerText || undefined} activeBlockId={activeBlockId} fullscreen editorDrawerOpen={isPreviewDrawerOpen} onSetActiveBlock={setActiveAndScroll} onUpdateRichBlock={handleUpdateRichBlock} onUpdateTableCell={handleUpdateTableCell} onToggleFullscreen={() => setIsPreviewFullscreen(false)} onToggleEditorDrawer={() => setIsPreviewDrawerOpen((current) => !current)} onExportDocx={handleExportDocx} /></div></div></div> : null}
-    </>
+            </section>
+          </div>
+        </main>
+        {isPreviewFullscreen ? <div className="fixed inset-0 z-[120] bg-slate-950/60 backdrop-blur-sm"><div className="flex h-full"><div className={`relative h-full border-r border-slate-800 bg-slate-950/96 transition-all duration-300 ${isPreviewDrawerOpen ? "w-[28rem] p-4" : "w-14 p-2"}`}><button type="button" onClick={() => setIsPreviewDrawerOpen((current) => !current)} className="mb-3 inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700 bg-slate-900 text-slate-200 transition hover:bg-slate-800" aria-label={isPreviewDrawerOpen ? "Hide slide editor" : "Show slide editor"}><PanelLeftClose className={`h-4 w-4 transition ${isPreviewDrawerOpen ? "" : "rotate-180"}`} /></button>{isPreviewDrawerOpen ? <div className="h-[calc(100%-3.25rem)] min-h-0">{editorNode}</div> : null}</div><div className="min-h-0 flex-1 p-4"><PreviewPane blocks={blocks} images={imagesWithLogo} commentsByBlock={commentsByBlock} documentTitle={documentTitle} titlePage={titlePageForPreview} documentSettings={documentSettings} documentStructure={documentStructure} headerText={titlePage.headerText || undefined} footerText={titlePage.footerText || undefined} activeBlockId={activeBlockId} fullscreen editorDrawerOpen={isPreviewDrawerOpen} onSetActiveBlock={setActiveAndScroll} onUpdateRichBlock={handleUpdateRichBlock} onUpdateTableCell={handleUpdateTableCell} onToggleFullscreen={() => setIsPreviewFullscreen(false)} onToggleEditorDrawer={() => setIsPreviewDrawerOpen((current) => !current)} onExportDocx={handleExportDocx} /></div></div></div> : null}
+      </>
+    </ProtectedRoute>
   );
 }
