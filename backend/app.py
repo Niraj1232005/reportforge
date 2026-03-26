@@ -47,7 +47,7 @@ frontend_origins.extend(
     )
 )
 
-app = Flask(__name__, static_folder="../frontend")
+app = Flask(__name__, static_folder="frontend")
 CORS(
     app,
     origins=frontend_origins,
@@ -361,7 +361,7 @@ def _ensure_demo_user():
 
 @app.route("/")
 def home():
-    return send_from_directory("../frontend", "index.html")
+    return send_from_directory("frontend", "index.html")
 
 
 @app.route("/<path:filename>")
