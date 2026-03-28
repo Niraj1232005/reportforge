@@ -19,6 +19,11 @@ export const DEFAULT_DOCUMENT_SETTINGS: DocumentStyleSettings = {
   heading3Size: 14,
   paragraphAlign: "justify",
   lineSpacing: 1.5,
+  marginTopIn: 1,
+  marginBottomIn: 1,
+  marginLeftIn: 1,
+  marginRightIn: 1,
+  pageBreakAfterHeading1: true,
 };
 
 const clamp = (value: number, min: number, max: number) => {
@@ -57,6 +62,14 @@ export const normalizeDocumentSettings = (
         ? input.paragraphAlign
         : DEFAULT_DOCUMENT_SETTINGS.paragraphAlign,
     lineSpacing: clamp(Number(input.lineSpacing || DEFAULT_DOCUMENT_SETTINGS.lineSpacing), 1, 2),
+    marginTopIn: clamp(Number(input.marginTopIn || DEFAULT_DOCUMENT_SETTINGS.marginTopIn), 0.5, 2),
+    marginBottomIn: clamp(Number(input.marginBottomIn || DEFAULT_DOCUMENT_SETTINGS.marginBottomIn), 0.5, 2),
+    marginLeftIn: clamp(Number(input.marginLeftIn || DEFAULT_DOCUMENT_SETTINGS.marginLeftIn), 0.5, 2),
+    marginRightIn: clamp(Number(input.marginRightIn || DEFAULT_DOCUMENT_SETTINGS.marginRightIn), 0.5, 2),
+    pageBreakAfterHeading1:
+      typeof input.pageBreakAfterHeading1 === "boolean"
+        ? input.pageBreakAfterHeading1
+        : DEFAULT_DOCUMENT_SETTINGS.pageBreakAfterHeading1,
   };
 };
 

@@ -5,7 +5,7 @@ import {
   Github,
   LoaderCircle,
   Mail,
-  Sparkles,
+  UserRound,
   X,
 } from "lucide-react";
 import { useState } from "react";
@@ -16,7 +16,6 @@ type AuthPendingAction =
   | "github"
   | "email-login"
   | "email-signup"
-  | "demo"
   | null;
 
 interface AuthModalProps {
@@ -31,7 +30,7 @@ interface AuthModalProps {
   onGoogle: () => Promise<void>;
   onGithub: () => Promise<void>;
   onEmailSubmit: (mode: AuthMode, email: string, password: string) => Promise<void>;
-  onDemo: () => Promise<void>;
+  onContinueAsGuest: () => void;
 }
 
 function GoogleMark() {
@@ -69,7 +68,7 @@ export default function AuthModal({
   onGoogle,
   onGithub,
   onEmailSubmit,
-  onDemo,
+  onContinueAsGuest,
 }: AuthModalProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -231,30 +230,27 @@ export default function AuthModal({
               </button>
             </form>
 
-            <div className="mt-5 rounded-[1.5rem] border border-amber-200 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/30">
+            <div className="mt-5 rounded-[1.5rem] border border-blue-200 bg-blue-50 p-4 dark:border-blue-900 dark:bg-blue-950/30">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-700 dark:text-amber-300">
-                    Recruiter Demo
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700 dark:text-blue-300">
+                    Guest Mode
                   </p>
-                  <p className="mt-2 text-sm text-amber-900 dark:text-amber-100">
-                    Instant access with the shared demo account. No email verification required.
+                  <p className="mt-2 text-sm text-blue-950 dark:text-blue-100">
+                    Keep editing without login. You can preview and export now, then sign in later to
+                    save history and sync your reports.
                   </p>
                 </div>
-                <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-amber-600 dark:text-amber-300" />
+                <UserRound className="mt-0.5 h-5 w-5 shrink-0 text-blue-600 dark:text-blue-300" />
               </div>
               <button
                 type="button"
-                onClick={() => void onDemo()}
+                onClick={onContinueAsGuest}
                 disabled={isBusy}
-                className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-amber-500 px-4 py-3 text-sm font-semibold text-white transition hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-70"
+                className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70"
               >
-                {pendingAction === "demo" ? (
-                  <LoaderCircle className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Sparkles className="h-4 w-4" />
-                )}
-                Try Demo
+                <UserRound className="h-4 w-4" />
+                Continue as Guest
               </button>
             </div>
           </motion.div>

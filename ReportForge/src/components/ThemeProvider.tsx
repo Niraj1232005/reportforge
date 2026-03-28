@@ -16,6 +16,7 @@ interface ThemeContextValue {
   isDark: boolean;
   setTheme: (theme: ThemeMode) => void;
   toggleTheme: () => void;
+  mounted: boolean;
 }
 
 const STORAGE_KEY = "reportforge-theme";
@@ -43,10 +44,16 @@ const applyTheme = (theme: ThemeMode) => {
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<ThemeMode>(() => resolveInitialTheme());
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     applyTheme(theme);
   }, [theme]);
+
+  useEffect(() => {
+    // mark as mounted on client to avoid SSR/client render mismatches
+    setMounted(true);
+  }, []);
 
   const setTheme = (nextTheme: ThemeMode) => {
     setThemeState(nextTheme);
@@ -62,6 +69,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       isDark: theme === "dark",
       setTheme,
       toggleTheme: () => setTheme(theme === "dark" ? "light" : "dark"),
+      mounted,
     }),
     [theme]
   );

@@ -25,13 +25,11 @@ import {
 } from "@/lib/document-config";
 import { normalizeDocumentSettings } from "@/lib/document-settings";
 import {
+  A4_HEIGHT_MM,
   A4_HEIGHT_PX,
-  A4_WIDTH_PX,
-  MARGIN_BOTTOM_PX,
-  MARGIN_LEFT_PX,
-  MARGIN_RIGHT_PX,
-  MARGIN_TOP_PX,
+  A4_WIDTH_MM,
   getBlockFontSizePt,
+  getDocumentMarginPx,
   getDocumentFontFamily,
 } from "@/lib/document-schema";
 import type {
@@ -174,6 +172,18 @@ function PreviewPane({
   const staticPages = countStaticDocumentPages(structure);
   const pageCount = pages.length + staticPages;
   const zoomRatio = zoom / 100;
+  const blockPageLookup = useMemo(() => {
+    const lookup: Record<string, number> = {};
+    const contentPageOffset = staticPages;
+
+    pages.forEach((pageBlocks, pageIndex) => {
+      pageBlocks.forEach((block) => {
+        lookup[block.id] = contentPageOffset + pageIndex + 1;
+      });
+    });
+
+    return lookup;
+  }, [pages, staticPages]);
 
   const renderComments = (blockId: string) => {
     const comments = commentsByBlock[blockId] ?? [];
@@ -201,16 +211,17 @@ function PreviewPane({
     options?: { hideHeader?: boolean }
   ) => (
     <article
-      className="rf-preview-page mx-auto flex flex-col"
+      className="rf-preview-page mx-auto flex flex-col bg-white text-slate-900"
       style={{
-        width: A4_WIDTH_PX,
-        minHeight: A4_HEIGHT_PX,
+        width: `${A4_WIDTH_MM}mm`,
+        minHeight: `${A4_HEIGHT_MM}mm`,
+        height: `${A4_HEIGHT_MM}mm`,
         transform: `scale(${zoomRatio})`,
         transformOrigin: "top center",
-        paddingTop: MARGIN_TOP_PX,
-        paddingRight: MARGIN_RIGHT_PX,
-        paddingBottom: MARGIN_BOTTOM_PX,
-        paddingLeft: MARGIN_LEFT_PX,
+        paddingTop: getDocumentMarginPx(settings, "top"),
+        paddingRight: getDocumentMarginPx(settings, "right"),
+        paddingBottom: getDocumentMarginPx(settings, "bottom"),
+        paddingLeft: getDocumentMarginPx(settings, "left"),
         fontFamily: documentFontFamily,
         lineHeight: settings.lineSpacing,
       }}
@@ -330,7 +341,9 @@ function PreviewPane({
                 >
                   {item.number} {item.title}
                 </button>
-                <span className="min-w-8 text-right text-slate-400">{pageNumber + 1}</span>
+                <span className="min-w-8 text-right text-slate-400">
+                  {blockPageLookup[item.blockId] ?? pageNumber + 1}
+                </span>
               </div>
             ))
           ) : (
@@ -615,8 +628,8 @@ function PreviewPane({
   });
 
   return (
-    <section className="surface-card flex h-full min-h-0 flex-col overflow-hidden dark:bg-slate-950">
-      <div className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 px-5 py-4 backdrop-blur dark:border-slate-800 dark:bg-slate-950/95">
+    <section className="rf-preview-print-root surface-card flex h-full min-h-0 flex-col overflow-hidden dark:bg-slate-950">
+      <div className="rf-preview-toolbar sticky top-0 z-20 border-b border-slate-200 bg-white/95 px-5 py-4 backdrop-blur dark:border-slate-800 dark:bg-slate-950/95">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-600 dark:text-blue-400">

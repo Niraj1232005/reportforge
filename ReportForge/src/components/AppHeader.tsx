@@ -44,8 +44,8 @@ const getUserDisplayName = (email: string | undefined | null, fullName: unknown)
 
 export default function AppHeader() {
   const pathname = usePathname();
-  const { isDark, toggleTheme } = useTheme();
-  const { isAdmin, loading, logout, openLoginModal, user } = useAuth();
+  const { isDark, toggleTheme, mounted } = useTheme();
+  const { isAdmin, isGuestSession, loading, logout, openLoginModal, profile, user } = useAuth();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -58,7 +58,10 @@ export default function AppHeader() {
     return "/editor/research-report";
   }, [pathname]);
 
-  const userDisplayName = getUserDisplayName(user?.email, user?.user_metadata?.full_name);
+  const userDisplayName = getUserDisplayName(
+    user?.email,
+    profile?.full_name || user?.user_metadata?.full_name
+  );
 
   return (
     <header className="sticky top-0 z-50 border-b border-slate-200/80 bg-white/90 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-950/80">
@@ -139,9 +142,11 @@ export default function AppHeader() {
             type="button"
             onClick={toggleTheme}
             className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:bg-slate-100 hover:text-slate-900 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100"
-            aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+            aria-label={
+              mounted ? (isDark ? "Switch to light mode" : "Switch to dark mode") : "Toggle theme"
+            }
           >
-            {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            {mounted ? (isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />) : <span className="h-4 w-4" aria-hidden />}
           </button>
 
           {user ? (
@@ -209,7 +214,7 @@ export default function AppHeader() {
               disabled={loading}
               className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-100 disabled:opacity-60 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
             >
-              {loading ? "Loading..." : "Login"}
+              {loading ? "Loading..." : isGuestSession ? "Login to Save" : "Login"}
             </button>
           )}
 
@@ -227,9 +232,11 @@ export default function AppHeader() {
             type="button"
             onClick={toggleTheme}
             className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
-            aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+            aria-label={
+              mounted ? (isDark ? "Switch to light mode" : "Switch to dark mode") : "Toggle theme"
+            }
           >
-            {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            {mounted ? (isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />) : <span className="h-4 w-4" aria-hidden />}
           </button>
           <button
             type="button"
@@ -303,7 +310,7 @@ export default function AppHeader() {
                   disabled={loading}
                   className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200"
                 >
-                  {loading ? "Loading..." : "Login"}
+                  {loading ? "Loading..." : isGuestSession ? "Login to Save" : "Login"}
                 </button>
               )}
             </div>

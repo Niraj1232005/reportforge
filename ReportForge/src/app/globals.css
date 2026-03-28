@@ -122,6 +122,14 @@ a {
   color: #1f2937;
 }
 
+.dark .doc-rich {
+  color: #e2e8f0;
+}
+
+.dark .doc-rich-preview {
+  color: #1f2937;
+}
+
 .doc-rich {
   font-family: var(--font-document);
 }
@@ -211,8 +219,59 @@ a {
   background: #ffffff;
   border: 1px solid #dbe3ef;
   box-shadow: 0 18px 40px rgba(15, 23, 42, 0.14);
+  overflow: hidden;
 }
 
 .dark .rf-preview-page {
   box-shadow: 0 18px 48px rgba(2, 6, 23, 0.5);
+}
+
+@page {
+  size: A4;
+  margin: 0;
+}
+
+@media print {
+  html,
+  body {
+    background: #ffffff !important;
+  }
+
+  body {
+    color: #111827 !important;
+  }
+
+  header,
+  footer,
+  .rf-print-hide,
+  .rf-preview-toolbar {
+    display: none !important;
+  }
+
+  main,
+  .surface-card,
+  .surface-panel,
+  .soft-card,
+  .rf-preview-print-root {
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .rf-preview-print-root {
+    overflow: visible !important;
+    height: auto !important;
+  }
+
+  .rf-preview-page {
+    width: 210mm !important;
+    min-height: 297mm !important;
+    height: 297mm !important;
+    margin: 0 auto !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    break-after: page;
+    page-break-after: always;
+    transform: none !important;
+  }
 }

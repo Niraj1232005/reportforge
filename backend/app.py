@@ -4,7 +4,6 @@ from pathlib import Path
 import os
 from html import escape
 import re
-import requests
 
 from services.extract_pdf import extract_pdf_text
 from services.extract_docx import extract_docx_text
@@ -52,8 +51,9 @@ CORS(
     app,
     origins=frontend_origins,
     methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Content-Type"],
+    allow_headers=["Content-Type", "Authorization"],
 )
+app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024
 
 UPLOAD_DIR = BASE_DIR / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
@@ -63,10 +63,7 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 
 ALLOWED_EXTENSIONS = {"pdf", "docx", "txt", "jpg", "jpeg", "png"}
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
-SUPABASE_URL = os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL") or ""
-SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or ""
-DEMO_EMAIL = "demo@reportforge.app"
-DEMO_PASSWORD = "demo1234"
+MAX_JSON_PAYLOAD_SIZE = 6 * 1024 * 1024
 
 
 def _iter_docx_blocks(document: DocxDocument):
@@ -132,6 +129,149 @@ def _strip_html_text(value: str) -> str:
     text = re.sub(r"<[^>]+>", " ", str(value or ""))
     text = re.sub(r"\s+", " ", text).strip()
     return text
+
+
+def _sanitize_plain_text(value, fallback: str = "", max_length: int = 200) -> str:
+    text = re.sub(r"[\x00-\x1f\x7f]+", " ", str(value or ""))
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text:
+        return fallback
+    return text[:max_length]
+
+
+def _sanitize_html_fragment(value, max_length: int = 50000) -> str:
+    html_value = str(value or "")[:max_length]
+    html_value = re.sub(
+        r"<\s*(script|style|iframe|object|embed|meta|link)[^>]*>[\s\S]*?<\s*/\s*\1\s*>",
+        "",
+        html_value,
+        flags=re.IGNORECASE,
+    )
+    html_value = re.sub(r"\son[a-z]+\s*=\s*(['\"]).*?\1", "", html_value, flags=re.IGNORECASE)
+    html_value = re.sub(r"\son[a-z]+\s*=\s*[^\s>]+", "", html_value, flags=re.IGNORECASE)
+    html_value = re.sub(r"javascript:", "", html_value, flags=re.IGNORECASE)
+    return html_value.strip()
+
+
+def _sanitize_table_rows(rows):
+    if not isinstance(rows, list):
+        return []
+
+    sanitized_rows = []
+    for row in rows[:50]:
+        if not isinstance(row, list):
+            continue
+        sanitized_rows.append([
+            _sanitize_plain_text(cell, "", 500) for cell in row[:20]
+        ])
+
+    return sanitized_rows
+
+
+def _sanitize_blocks(blocks):
+    if not isinstance(blocks, list):
+        return []
+
+    sanitized_blocks = []
+    allowed_types = {
+        "paragraph",
+        "heading1",
+        "heading2",
+        "heading3",
+        "header",
+        "footer",
+        "bullet_list",
+        "numbered_list",
+        "quote",
+        "code",
+        "table",
+        "image",
+        "page_break",
+        "equation",
+        "reference",
+        "footnote",
+    }
+
+    for raw_block in blocks[:1000]:
+        if not isinstance(raw_block, dict):
+            continue
+
+        block_type = str(raw_block.get("type") or "").strip().lower()
+        if block_type not in allowed_types:
+            continue
+
+        sanitized_block = {
+            "id": _sanitize_plain_text(raw_block.get("id"), "", 80),
+            "type": block_type,
+        }
+
+        if block_type in {"paragraph", "heading1", "heading2", "heading3", "header", "footer", "bullet_list", "numbered_list", "quote"}:
+            sanitized_block["html"] = _sanitize_html_fragment(raw_block.get("html"))
+        elif block_type == "code":
+            sanitized_block["code"] = str(raw_block.get("code") or "")[:20000]
+        elif block_type == "table":
+            sanitized_block["rows"] = _sanitize_table_rows(raw_block.get("rows"))
+        elif block_type == "image":
+            sanitized_block["source"] = str(raw_block.get("source") or "")[:100000]
+            sanitized_block["caption"] = _sanitize_plain_text(raw_block.get("caption"), "Figure", 240)
+            try:
+                sanitized_block["width"] = max(10, min(100, int(raw_block.get("width", 75))))
+            except (TypeError, ValueError):
+                sanitized_block["width"] = 75
+            alignment = str(raw_block.get("alignment") or "center").strip().lower()
+            sanitized_block["alignment"] = alignment if alignment in {"left", "center", "right"} else "center"
+        elif block_type == "equation":
+            sanitized_block["latex"] = str(raw_block.get("latex") or "")[:5000]
+            sanitized_block["label"] = _sanitize_plain_text(raw_block.get("label"), "", 120)
+        elif block_type == "reference":
+            sanitized_block["citationKey"] = _sanitize_plain_text(raw_block.get("citationKey"), "", 80)
+            sanitized_block["source"] = _sanitize_plain_text(raw_block.get("source"), "", 500)
+        elif block_type == "footnote":
+            sanitized_block["footnoteKey"] = _sanitize_plain_text(raw_block.get("footnoteKey"), "", 80)
+            sanitized_block["content"] = _sanitize_plain_text(raw_block.get("content"), "", 500)
+
+        sanitized_blocks.append(sanitized_block)
+
+    return sanitized_blocks
+
+
+def _sanitize_image_lookup(images):
+    if not isinstance(images, dict):
+        return {}
+
+    sanitized_images = {}
+    for key, value in list(images.items())[:200]:
+        if not isinstance(value, dict):
+            continue
+        image_id = _sanitize_plain_text(value.get("id") or key, "", 80)
+        if not image_id:
+            continue
+        sanitized_images[image_id] = {
+            "id": image_id,
+            "name": _sanitize_plain_text(value.get("name"), "Image", 120),
+            "mimeType": _sanitize_plain_text(value.get("mimeType"), "image/png", 80),
+            "dataBase64": str(value.get("dataBase64") or "")[:5_000_000],
+        }
+
+    return sanitized_images
+
+
+def _sanitize_title_page(title_page):
+    if not isinstance(title_page, dict):
+        return {}
+
+    return {
+        "collegeName": _sanitize_plain_text(title_page.get("collegeName"), "", 160),
+        "studentName": _sanitize_plain_text(title_page.get("studentName"), "", 160),
+        "course": _sanitize_plain_text(title_page.get("course") or title_page.get("courseName"), "", 160),
+        "logoDataUrl": str(title_page.get("logoDataUrl") or "")[:5_000_000],
+        "logoWidth": title_page.get("logoWidth", 40),
+        "eyebrow": _sanitize_plain_text(title_page.get("eyebrow"), "", 120),
+        "subtitle": _sanitize_plain_text(title_page.get("subtitle"), "", 240),
+        "note": _sanitize_plain_text(title_page.get("note"), "", 240),
+        "headerText": _sanitize_plain_text(title_page.get("headerText"), "", 160),
+        "footerText": _sanitize_plain_text(title_page.get("footerText"), "", 160),
+    }
 
 
 def _blocks_to_tiptap_doc(blocks):
@@ -268,97 +408,6 @@ def _blocks_to_tiptap_doc(blocks):
 
     return {"type": "doc", "content": content}
 
-
-def _supabase_admin_headers():
-    return {
-        "apikey": SUPABASE_SERVICE_ROLE_KEY,
-        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
-        "Content-Type": "application/json",
-    }
-
-
-def _supabase_admin_url(path: str = ""):
-    return f"{SUPABASE_URL.rstrip('/')}/auth/v1/admin/users{path}"
-
-
-def _extract_supabase_error(response):
-    try:
-        payload = response.json()
-    except Exception:
-        payload = {}
-
-    message = (
-        payload.get("msg")
-        or payload.get("message")
-        or payload.get("error_description")
-        or payload.get("error")
-        or response.text
-        or "Supabase request failed."
-    )
-    return str(message).strip()
-
-
-def _find_supabase_user_by_email(email: str):
-    response = requests.get(
-        _supabase_admin_url(),
-        headers=_supabase_admin_headers(),
-        params={"page": 1, "per_page": 200},
-        timeout=10,
-    )
-
-    if not response.ok:
-        raise RuntimeError(_extract_supabase_error(response))
-
-    payload = response.json() if response.content else {}
-    users = payload.get("users") if isinstance(payload, dict) else []
-
-    for user in users or []:
-        if str(user.get("email") or "").strip().lower() == email.lower():
-            return user
-
-    return None
-
-
-def _ensure_demo_user():
-    create_payload = {
-        "email": DEMO_EMAIL,
-        "password": DEMO_PASSWORD,
-        "email_confirm": True,
-        "user_metadata": {
-            "full_name": "Demo Recruiter",
-            "is_demo": True,
-        },
-    }
-
-    create_response = requests.post(
-        _supabase_admin_url(),
-        headers=_supabase_admin_headers(),
-        json=create_payload,
-        timeout=10,
-    )
-
-    if create_response.ok:
-        return
-
-    create_error = _extract_supabase_error(create_response)
-    if "already registered" not in create_error.lower() and "already exists" not in create_error.lower():
-        raise RuntimeError(create_error)
-
-    existing_user = _find_supabase_user_by_email(DEMO_EMAIL)
-    if not existing_user or not existing_user.get("id"):
-        raise RuntimeError("The demo account exists but could not be updated.")
-
-    update_response = requests.put(
-        _supabase_admin_url(f"/{existing_user['id']}"),
-        headers=_supabase_admin_headers(),
-        json=create_payload,
-        timeout=10,
-    )
-
-    if not update_response.ok:
-        raise RuntimeError(_extract_supabase_error(update_response))
-
-
 @app.route("/")
 def home():
     return send_from_directory("frontend", "index.html")
@@ -367,20 +416,6 @@ def home():
 @app.route("/<path:filename>")
 def static_files(filename):
     return send_from_directory("../frontend", filename)
-
-
-@app.route("/auth/demo-user", methods=["POST"])
-def ensure_demo_user():
-    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
-        return jsonify({"error": "Supabase admin credentials are not configured."}), 503
-
-    try:
-        _ensure_demo_user()
-    except Exception as error:
-        return jsonify({"error": str(error)}), 500
-
-    return jsonify({"status": "ready"}), 200
-
 
 def allowed_file(filename: str) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -416,18 +451,21 @@ def upload():
     file.save(save_path)
 
     # Extract text
-    if ext == "pdf":
-        raw_text = extract_pdf_text(save_path)
-    elif ext == "docx":
-        raw_text = extract_docx_text(save_path)
-    elif ext in {"jpg", "jpeg", "png"}:
-        raw_text = extract_image_text(save_path)
-    elif ext == "txt":
-        raw_text = extract_txt_text(save_path)
-    else:
-        return jsonify({"error": "Unsupported file type"}), 400
+    try:
+        if ext == "pdf":
+            raw_text = extract_pdf_text(save_path)
+        elif ext == "docx":
+            raw_text = extract_docx_text(save_path)
+        elif ext in {"jpg", "jpeg", "png"}:
+            raw_text = extract_image_text(save_path)
+        elif ext == "txt":
+            raw_text = extract_txt_text(save_path)
+        else:
+            return jsonify({"error": "Unsupported file type"}), 400
 
-    cleaned_text = clean_text(raw_text)
+        cleaned_text = clean_text(raw_text)
+    except Exception as error:
+        return jsonify({"error": f"Unable to process the uploaded file: {error}"}), 400
 
     return jsonify({"text": cleaned_text})
 
@@ -459,6 +497,9 @@ def download():
 
 @app.route("/generate-doc", methods=["POST"])
 def generate_doc():
+    if request.content_length and request.content_length > MAX_JSON_PAYLOAD_SIZE:
+        return jsonify({"error": "Request payload is too large."}), 413
+
     data = request.get_json(silent=True) or {}
     blocks = data.get("blocks")
     sections = data.get("sections")
@@ -469,39 +510,42 @@ def generate_doc():
     document_settings = data.get("documentSettings")
     document_structure = data.get("documentStructure")
 
-    valid_blocks = [block for block in blocks if isinstance(block, dict)] if isinstance(blocks, list) else []
+    valid_blocks = _sanitize_blocks(blocks)
     if not valid_blocks and isinstance(document, dict):
-        valid_blocks = tiptap_document_to_blocks(document)
+        valid_blocks = _sanitize_blocks(tiptap_document_to_blocks(document))
     valid_sections = [section for section in sections if isinstance(section, dict)] if isinstance(sections, list) else []
-    image_lookup = images if isinstance(images, dict) else {}
+    image_lookup = _sanitize_image_lookup(images)
     valid_comments = [comment for comment in comments if isinstance(comment, dict)] if isinstance(comments, list) else []
-    valid_title_page = title_page if isinstance(title_page, dict) else {}
+    valid_title_page = _sanitize_title_page(title_page)
     valid_document_settings = document_settings if isinstance(document_settings, dict) else {}
     valid_document_structure = document_structure if isinstance(document_structure, dict) else {}
 
     if not valid_blocks and not valid_sections:
         return jsonify({"error": "Provide a non-empty list of blocks or sections."}), 400
 
-    file_id = str(uuid.uuid4())
-    path = OUTPUT_DIR / f"{file_id}_report.docx"
+    try:
+        file_id = str(uuid.uuid4())
+        path = OUTPUT_DIR / f"{file_id}_report.docx"
 
-    create_editor_docx(
-        sections=valid_sections if valid_sections else None,
-        blocks=valid_blocks if valid_blocks else None,
-        output_path=path,
-        document_title=data.get("title", "REPORT"),
-        image_lookup=image_lookup,
-        comments=valid_comments if valid_comments else None,
-        title_page=valid_title_page if valid_title_page else None,
-        document_settings=valid_document_settings if valid_document_settings else None,
-        document_structure=valid_document_structure if valid_document_structure else None,
-    )
+        create_editor_docx(
+            sections=valid_sections if valid_sections else None,
+            blocks=valid_blocks if valid_blocks else None,
+            output_path=path,
+            document_title=_sanitize_plain_text(data.get("title"), "REPORT", 200),
+            image_lookup=image_lookup,
+            comments=valid_comments if valid_comments else None,
+            title_page=valid_title_page if valid_title_page else None,
+            document_settings=valid_document_settings if valid_document_settings else None,
+            document_structure=valid_document_structure if valid_document_structure else None,
+        )
 
-    return send_file(
-        path,
-        as_attachment=True,
-        download_name="report.docx"
-    )
+        return send_file(
+            path,
+            as_attachment=True,
+            download_name="report.docx"
+        )
+    except Exception as error:
+        return jsonify({"error": f"Unable to generate the document: {error}"}), 500
 
 
 @app.route("/upload-docx", methods=["POST"])

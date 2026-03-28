@@ -2,7 +2,7 @@ import type { DocumentStructureSettings } from "@/types/editor";
 
 export const DEFAULT_DOCUMENT_STRUCTURE_SETTINGS: DocumentStructureSettings = {
   showCoverPage: false,
-  showTableOfContents: false,
+  showTableOfContents: true,
 };
 
 export const normalizeDocumentStructureSettings = (
@@ -10,7 +10,7 @@ export const normalizeDocumentStructureSettings = (
 ): DocumentStructureSettings => {
   return {
     showCoverPage: Boolean(value?.showCoverPage),
-    showTableOfContents: Boolean(value?.showTableOfContents),
+    showTableOfContents: true,
   };
 };
 

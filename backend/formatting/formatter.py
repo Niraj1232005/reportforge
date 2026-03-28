@@ -1,5 +1,6 @@
 import base64
 import re
+from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -31,6 +32,11 @@ DEFAULT_DOCUMENT_SETTINGS: Dict[str, Any] = {
     "heading3Size": 14,
     "paragraphAlign": "justify",
     "lineSpacing": 1.5,
+    "marginTopIn": 1,
+    "marginBottomIn": 1,
+    "marginLeftIn": 1,
+    "marginRightIn": 1,
+    "pageBreakAfterHeading1": True,
 }
 
 DEFAULT_DOCUMENT_STRUCTURE: Dict[str, Any] = {
@@ -62,6 +68,13 @@ def _normalize_document_settings(value: Optional[Dict[str, Any]] = None) -> Dict
         "heading3Size": _number("heading3Size", 14, 12, 20),
         "paragraphAlign": paragraph_align,
         "lineSpacing": _number("lineSpacing", 1.5, 1.0, 2.0),
+        "marginTopIn": _number("marginTopIn", 1, 0.5, 2.0),
+        "marginBottomIn": _number("marginBottomIn", 1, 0.5, 2.0),
+        "marginLeftIn": _number("marginLeftIn", 1, 0.5, 2.0),
+        "marginRightIn": _number("marginRightIn", 1, 0.5, 2.0),
+        "pageBreakAfterHeading1": bool(
+            source.get("pageBreakAfterHeading1", True)
+        ),
     }
 
 
@@ -91,10 +104,10 @@ def _configure_document(doc: Document, settings: Dict[str, Any]):
     section = doc.sections[0]
     section.page_width = Inches(8.27)
     section.page_height = Inches(11.69)
-    section.top_margin = Inches(1)
-    section.bottom_margin = Inches(1)
-    section.left_margin = Inches(1)
-    section.right_margin = Inches(1)
+    section.top_margin = Inches(float(settings["marginTopIn"]))
+    section.bottom_margin = Inches(float(settings["marginBottomIn"]))
+    section.left_margin = Inches(float(settings["marginLeftIn"]))
+    section.right_margin = Inches(float(settings["marginRightIn"]))
 
     font_name = str(settings["fontFamily"])
     _apply_style_font(doc.styles["Normal"], font_name, size_pt=int(settings["bodyFontSize"]), bold=False)
@@ -399,9 +412,7 @@ def _resolve_image_stream(
 
     if stripped_source.startswith(("http://", "https://")):
         try:
-            response = requests.get(stripped_source, timeout=10)
-            response.raise_for_status()
-            return BytesIO(response.content)
+            return BytesIO(_fetch_remote_image_bytes(stripped_source))
         except Exception:
             return None
 
@@ -413,6 +424,13 @@ def _resolve_image_stream(
         return None
 
     return None
+
+
+@lru_cache(maxsize=32)
+def _fetch_remote_image_bytes(url: str) -> bytes:
+    response = requests.get(url, timeout=10)
+    response.raise_for_status()
+    return response.content
 
 
 def _add_image(
@@ -1074,6 +1092,7 @@ def _render_document_blocks(
     heading_1 = 0
     heading_2 = 0
     heading_3 = 0
+    rendered_content_blocks = 0
     reference_lookup = _collect_reference_lookup(blocks)
     footnote_lookup = _collect_footnote_lookup(blocks)
 
@@ -1088,6 +1107,8 @@ def _render_document_blocks(
             continue
 
         if block_type == "heading1":
+            if rendered_content_blocks > 0 and resolved_settings.get("pageBreakAfterHeading1"):
+                doc.add_page_break()
             title_text = _extract_plain_text(
                 raw_block.get("html") or raw_block.get("content") or raw_block.get("title"),
                 "Untitled Section",
@@ -1103,6 +1124,7 @@ def _render_document_blocks(
 
             heading = doc.add_heading(f"{heading_1}. {title_text}", level=1)
             heading.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            rendered_content_blocks += 1
             continue
 
         if block_type == "heading2":
@@ -1122,6 +1144,7 @@ def _render_document_blocks(
 
             heading = doc.add_heading(f"{heading_1}.{heading_2}. {title_text}", level=2)
             heading.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            rendered_content_blocks += 1
             continue
 
         if block_type == "heading3":
@@ -1142,6 +1165,7 @@ def _render_document_blocks(
 
             heading = doc.add_heading(f"{heading_1}.{heading_2}.{heading_3}. {title_text}", level=3)
             heading.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            rendered_content_blocks += 1
             continue
 
         if block_type in {"paragraph", "bullet_list", "numbered_list"}:
@@ -1157,6 +1181,7 @@ def _render_document_blocks(
                 max_width_inches=max_width_inches,
                 settings=resolved_settings,
             )
+            rendered_content_blocks += 1
             continue
 
         if block_type == "quote":
@@ -1177,21 +1202,25 @@ def _render_document_blocks(
                 _set_run_font_name(quote_paragraph.runs[0], str(resolved_settings["fontFamily"]))
                 quote_paragraph.runs[0].font.size = Pt(float(resolved_settings["bodyFontSize"]))
                 quote_paragraph.runs[0].italic = True
+            rendered_content_blocks += 1
             continue
 
         if block_type == "code":
             _render_code_block(doc, str(raw_block.get("code") or ""), resolved_settings)
             doc.add_paragraph("")
+            rendered_content_blocks += 1
             continue
 
         if block_type == "table":
             _render_table_block(doc, raw_block.get("rows"), resolved_settings)
+            rendered_content_blocks += 1
             continue
 
         if block_type == "equation":
             latex = str(raw_block.get("latex") or "").strip()
             label = str(raw_block.get("label") or "").strip()
             _render_equation_block(doc, latex, label)
+            rendered_content_blocks += 1
             continue
 
         if block_type in {"reference", "footnote", "header", "footer"}:
@@ -1227,6 +1256,7 @@ def _render_document_blocks(
                 alignment=image_alignment,
                 settings=resolved_settings,
             )
+            rendered_content_blocks += 1
             continue
 
         fallback_content = str(raw_block.get("html") or raw_block.get("content") or raw_block.get("text") or "")
@@ -1242,6 +1272,7 @@ def _render_document_blocks(
             max_width_inches=max_width_inches,
             settings=resolved_settings,
         )
+        rendered_content_blocks += 1
 
     _append_reference_section(doc, reference_lookup)
     _append_footnote_section(doc, footnote_lookup)

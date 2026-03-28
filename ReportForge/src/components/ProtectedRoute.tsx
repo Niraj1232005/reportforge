@@ -16,7 +16,7 @@ export default function ProtectedRoute({
   children,
   requireAdmin = false,
   loginTitle = "Login to continue",
-  loginMessage = "Continue with Google, GitHub, email, or the instant demo account.",
+  loginMessage = "Continue with Google, GitHub, or email. Guest mode is always available in the editor.",
 }: ProtectedRouteProps) {
   const pathname = usePathname();
   const { adminEmail, isAdmin, loading, openLoginModal, user } = useAuth();

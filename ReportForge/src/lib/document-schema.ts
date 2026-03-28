@@ -1,4 +1,4 @@
-import { DEFAULT_DOCUMENT_SETTINGS, getHeadingSize, ptToPx } from "@/lib/document-settings";
+import { DEFAULT_DOCUMENT_SETTINGS, getHeadingSize, normalizeDocumentSettings, ptToPx } from "@/lib/document-settings";
 import type { DocumentStyleSettings } from "@/types/editor";
 
 export const A4_WIDTH_MM = 210;
@@ -30,6 +30,43 @@ export const HEADING_FONT_SIZE_PT = DEFAULT_DOCUMENT_SETTINGS.heading2Size;
 
 export const getDocumentFontFamily = (settings: DocumentStyleSettings) => {
   return settings.fontFamily ? `"${settings.fontFamily}", ${DOCUMENT_FONT_FAMILY}` : DOCUMENT_FONT_FAMILY;
+};
+
+export const inchesToPx = (value: number) => {
+  return Math.round(value * IN_TO_PX);
+};
+
+export const getDocumentMarginPx = (
+  settings: DocumentStyleSettings,
+  side: "top" | "right" | "bottom" | "left"
+) => {
+  const normalized = normalizeDocumentSettings(settings);
+  if (side === "top") {
+    return inchesToPx(normalized.marginTopIn);
+  }
+  if (side === "right") {
+    return inchesToPx(normalized.marginRightIn);
+  }
+  if (side === "bottom") {
+    return inchesToPx(normalized.marginBottomIn);
+  }
+  return inchesToPx(normalized.marginLeftIn);
+};
+
+export const getA4ContentWidthPx = (settings: DocumentStyleSettings) => {
+  return (
+    A4_WIDTH_PX -
+    getDocumentMarginPx(settings, "left") -
+    getDocumentMarginPx(settings, "right")
+  );
+};
+
+export const getA4ContentHeightPx = (settings: DocumentStyleSettings) => {
+  return (
+    A4_HEIGHT_PX -
+    getDocumentMarginPx(settings, "top") -
+    getDocumentMarginPx(settings, "bottom")
+  );
 };
 
 export const getBlockFontSizePt = (

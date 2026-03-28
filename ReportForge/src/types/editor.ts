@@ -57,6 +57,11 @@ export interface DocumentStyleSettings {
   heading3Size: number;
   paragraphAlign: "left" | "right" | "center" | "justify";
   lineSpacing: number;
+  marginTopIn: number;
+  marginBottomIn: number;
+  marginLeftIn: number;
+  marginRightIn: number;
+  pageBreakAfterHeading1: boolean;
 }
 
 export type TemplateStyleSettings = DocumentStyleSettings;
@@ -207,11 +212,51 @@ export interface EditorSnapshot {
   activeBlockId: string | null;
 }
 
+export interface EditorDraftData {
+  templateId: string;
+  title: string;
+  titlePage: {
+    collegeName: string;
+    studentName: string;
+    courseName: string;
+    logoDataUrl: string;
+    eyebrow: string;
+    subtitle: string;
+    note: string;
+    headerText: string;
+    footerText: string;
+  };
+  blocks: DocumentBlock[];
+  images: Record<string, ReportImage>;
+  documentSettings: DocumentStyleSettings;
+  documentStructure: DocumentStructureSettings;
+  compactMode: boolean;
+  collapsedBlockIds: string[];
+}
+
 export interface DocumentHistoryEntry {
   id: string;
   savedAt: string;
   title: string;
   snapshot: EditorSnapshot;
+}
+
+export interface ReportRecord {
+  id: string;
+  user_id: string;
+  title: string;
+  content: EditorDraftData;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UserProfile {
+  id: string;
+  full_name: string;
+  college_name: string;
+  default_font: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export type DocumentBlock =

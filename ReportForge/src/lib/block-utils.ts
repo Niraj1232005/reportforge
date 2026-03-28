@@ -14,7 +14,7 @@ import {
   normalizeDocumentSettings,
   ptToPx,
 } from "@/lib/document-settings";
-import { A4_CONTENT_HEIGHT_PX } from "@/lib/document-schema";
+import { getA4ContentHeightPx } from "@/lib/document-schema";
 
 export interface OutlineItem {
   blockId: string;
@@ -469,6 +469,18 @@ function estimateBlockHeightPx(
   return lineHeight + paragraphSpacing;
 }
 
+const shouldForcePageBreakBeforeBlock = (
+  block: DocumentBlock,
+  currentPageLength: number,
+  settings: DocumentStyleSettings
+) => {
+  return (
+    block.type === "heading1" &&
+    currentPageLength > 0 &&
+    settings.pageBreakAfterHeading1
+  );
+};
+
 /**
  * Split blocks into pages by content height so each page fits A4 content area.
  * Respects explicit page_break blocks.
@@ -478,6 +490,7 @@ export const splitBlocksByPageContent = (
   settings: DocumentStyleSettings = DEFAULT_DOCUMENT_SETTINGS
 ): DocumentBlock[][] => {
   const normalizedSettings = normalizeDocumentSettings(settings);
+  const pageContentHeightPx = getA4ContentHeightPx(normalizedSettings);
   const pages: DocumentBlock[][] = [];
   let currentPage: DocumentBlock[] = [];
   let currentHeight = 0;
@@ -494,8 +507,13 @@ export const splitBlocksByPageContent = (
       currentHeight = 0;
       continue;
     }
+    if (shouldForcePageBreakBeforeBlock(block, currentPage.length, normalizedSettings)) {
+      pages.push(currentPage);
+      currentPage = [];
+      currentHeight = 0;
+    }
     const blockHeight = estimateBlockHeightPx(block, normalizedSettings);
-    if (currentHeight + blockHeight > A4_CONTENT_HEIGHT_PX && currentPage.length > 0) {
+    if (currentHeight + blockHeight > pageContentHeightPx && currentPage.length > 0) {
       pages.push(currentPage);
       currentPage = [block];
       currentHeight = blockHeight;
