@@ -14,7 +14,7 @@ import {
   normalizeDocumentSettings,
   ptToPx,
 } from "@/lib/document-settings";
-import { getA4ContentHeightPx } from "@/lib/document-schema";
+import { getA4ContentHeightPx, getDocumentLayoutMetrics } from "@/lib/document-schema";
 
 export interface OutlineItem {
   blockId: string;
@@ -429,44 +429,45 @@ function estimateBlockHeightPx(
   block: DocumentBlock,
   settings: DocumentStyleSettings
 ): number {
-  const lineHeight = Math.max(18, Math.round(ptToPx(settings.bodyFontSize) * settings.lineSpacing));
-  const paragraphSpacing = Math.max(8, Math.round(ptToPx(settings.bodyFontSize) * 0.45));
-  const headingSpacing = Math.max(12, Math.round(ptToPx(settings.bodyFontSize) * 0.75));
+  const metrics = getDocumentLayoutMetrics(settings);
+  const lineHeight = Math.max(18, Math.round(metrics.bodyLineHeightPx));
+
   if (block.type === "heading1" || block.type === "heading2" || block.type === "heading3") {
     const level = block.type === "heading1" ? 1 : block.type === "heading2" ? 2 : 3;
-    return Math.round(ptToPx(getHeadingSize(settings, level)) * 1.4) + headingSpacing;
+    return Math.round(ptToPx(getHeadingSize(settings, level)) * 1.35) + metrics.headingAfterPx;
   }
   if (block.type === "paragraph" || block.type === "header" || block.type === "footer") {
     const text = stripHtml(block.html);
     const words = text.split(/\s+/).filter(Boolean).length;
     const lines = words ? Math.max(1, Math.ceil(words / 12)) : 1;
-    return lines * lineHeight + paragraphSpacing;
+    return lines * lineHeight + metrics.paragraphAfterPx;
   }
   if (block.type === "bullet_list" || block.type === "numbered_list" || block.type === "quote") {
     const text = stripHtml(block.html);
     const words = text.split(/\s+/).filter(Boolean).length;
     const lines = words ? Math.max(1, Math.ceil(words / 12)) : 1;
-    return lines * lineHeight + paragraphSpacing;
+    return lines * lineHeight + (block.type === "quote" ? metrics.quoteAfterPx : metrics.listAfterPx);
   }
   if (block.type === "table") {
     const rows = block.rows.length;
-    return rows * Math.max(32, Math.round(lineHeight * 1.3)) + paragraphSpacing;
+    return rows * Math.max(32, Math.round(lineHeight * 1.2)) + metrics.tableAfterPx;
   }
   if (block.type === "image") {
     const widthRatio = Math.max(0.2, Math.min(1, (block.width || 75) / 100));
-    return Math.round(180 * widthRatio) + 52 + paragraphSpacing;
+    const estimatedImageHeight = Math.round(metrics.contentWidthPx * widthRatio * 0.62);
+    return estimatedImageHeight + ptToPx(settings.spacing.captionFontSizePt) + metrics.imageAfterPx + metrics.captionAfterPx;
   }
   if (block.type === "code") {
     const lines = (block.code || "").split(/\n/).length || 1;
-    return Math.min(420, lines * 22) + paragraphSpacing;
+    return Math.min(420, lines * 22) + metrics.codeAfterPx;
   }
   if (block.type === "page_break") {
     return 0;
   }
   if (block.type === "equation" || block.type === "reference" || block.type === "footnote") {
-    return 64 + paragraphSpacing;
+    return 64 + metrics.paragraphAfterPx;
   }
-  return lineHeight + paragraphSpacing;
+  return lineHeight + metrics.paragraphAfterPx;
 }
 
 const shouldForcePageBreakBeforeBlock = (
@@ -477,7 +478,7 @@ const shouldForcePageBreakBeforeBlock = (
   return (
     block.type === "heading1" &&
     currentPageLength > 0 &&
-    settings.pageBreakAfterHeading1
+    settings.pageBreakRules.heading1StartsNewPage
   );
 };
 
@@ -487,7 +488,8 @@ const shouldForcePageBreakBeforeBlock = (
  */
 export const splitBlocksByPageContent = (
   blocks: DocumentBlock[],
-  settings: DocumentStyleSettings = DEFAULT_DOCUMENT_SETTINGS
+  settings: DocumentStyleSettings = DEFAULT_DOCUMENT_SETTINGS,
+  measuredHeights: Record<string, number> = {}
 ): DocumentBlock[][] => {
   const normalizedSettings = normalizeDocumentSettings(settings);
   const pageContentHeightPx = getA4ContentHeightPx(normalizedSettings);
@@ -512,7 +514,7 @@ export const splitBlocksByPageContent = (
       currentPage = [];
       currentHeight = 0;
     }
-    const blockHeight = estimateBlockHeightPx(block, normalizedSettings);
+    const blockHeight = measuredHeights[block.id] ?? estimateBlockHeightPx(block, normalizedSettings);
     if (currentHeight + blockHeight > pageContentHeightPx && currentPage.length > 0) {
       pages.push(currentPage);
       currentPage = [block];

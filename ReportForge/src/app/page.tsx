@@ -3,7 +3,9 @@
 import { motion } from "framer-motion";
 import { ArrowRight, FileText, LayoutPanelTop, Sparkles, WandSparkles } from "lucide-react";
 import Link from "next/link";
+import { useAuth } from "@/components/AuthProvider";
 import { getTemplates } from "@/data/templates";
+import { DASHBOARD_ROUTE, TEMPLATES_ROUTE } from "@/lib/routes";
 
 const fadeUp = {
   hidden: { opacity: 0, y: 28 },
@@ -11,6 +13,7 @@ const fadeUp = {
 };
 
 export default function HomePage() {
+  const { user } = useAuth();
   const templates = getTemplates().slice(0, 3);
 
   return (
@@ -51,17 +54,17 @@ export default function HomePage() {
               className="mt-10 flex flex-wrap items-center gap-3"
             >
               <Link
-                href="/editor/research-report"
+                href={TEMPLATES_ROUTE}
                 className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
               >
-                Open Workspace
+                Create Report
                 <ArrowRight className="h-4 w-4" />
               </Link>
               <Link
-                href="/templates"
+                href={user ? DASHBOARD_ROUTE : TEMPLATES_ROUTE}
                 className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-100"
               >
-                Browse Templates
+                {user ? "Open Dashboard" : "Browse Templates"}
               </Link>
             </motion.div>
           </motion.div>
@@ -175,7 +178,7 @@ export default function HomePage() {
               </h2>
             </div>
             <Link
-              href="/templates"
+              href={TEMPLATES_ROUTE}
               className="inline-flex items-center gap-2 text-sm font-semibold text-slate-700 transition hover:text-blue-600"
             >
               View all templates
@@ -215,17 +218,17 @@ export default function HomePage() {
           </p>
           <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
             <Link
-              href="/editor/research-report"
+              href={TEMPLATES_ROUTE}
               className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
             >
-              Launch Editor
+              Create Report
               <ArrowRight className="h-4 w-4" />
             </Link>
             <Link
-              href="/templates"
+              href={user ? DASHBOARD_ROUTE : TEMPLATES_ROUTE}
               className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-100"
             >
-              Explore Templates
+              {user ? "Open Dashboard" : "Explore Templates"}
             </Link>
           </div>
         </div>

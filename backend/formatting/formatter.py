@@ -1,4 +1,5 @@
 import base64
+import json
 import re
 from functools import lru_cache
 from io import BytesIO
@@ -8,10 +9,10 @@ from urllib.parse import unquote
 
 import requests
 from docx import Document
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX, WD_TAB_ALIGNMENT
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Inches, Pt
+from docx.shared import Inches, Mm, Pt
 from lxml import html as lxml_html
 
 
@@ -24,19 +25,60 @@ PERCENT_PATTERN = re.compile(r"([0-9]+(?:\.[0-9]+)?)%")
 CITATION_PATTERN = re.compile(r"\[@([a-zA-Z0-9_-]+)\]")
 FOOTNOTE_PATTERN = re.compile(r"\[fn:([a-zA-Z0-9_-]+)\]")
 
-DEFAULT_DOCUMENT_SETTINGS: Dict[str, Any] = {
+SHARED_DOCUMENT_SETTINGS_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "ReportForge"
+    / "src"
+    / "shared"
+    / "document-settings.json"
+)
+
+FALLBACK_SHARED_DOCUMENT_SETTINGS: Dict[str, Any] = {
     "fontFamily": "Times New Roman",
     "bodyFontSize": 12,
-    "heading1Size": 18,
-    "heading2Size": 16,
-    "heading3Size": 14,
+    "headingSizes": {"title": 22, "h1": 18, "h2": 16, "h3": 14},
     "paragraphAlign": "justify",
     "lineSpacing": 1.5,
-    "marginTopIn": 1,
-    "marginBottomIn": 1,
-    "marginLeftIn": 1,
-    "marginRightIn": 1,
-    "pageBreakAfterHeading1": True,
+    "margins": {"top": 1, "bottom": 1, "left": 1, "right": 1, "unit": "in"},
+    "page": {"size": "A4", "widthMm": 210, "heightMm": 297},
+    "pageBreakRules": {"heading1StartsNewPage": True},
+    "spacing": {
+        "paragraphAfterPt": 8,
+        "headingAfterPt": 8,
+        "listAfterPt": 8,
+        "quoteAfterPt": 8,
+        "quoteIndentLeftIn": 0.35,
+        "quoteIndentRightIn": 0.2,
+        "codeLineHeight": 1.0,
+        "codeAfterPt": 8,
+        "tableFontSizePt": 11,
+        "tableAfterPt": 8,
+        "imageAfterPt": 6,
+        "captionFontSizePt": 10,
+        "captionAfterPt": 10,
+        "headerFooterFontSizePt": 10,
+        "equationAfterPt": 8,
+        "referenceFontSizePt": 11,
+        "referenceAfterPt": 6,
+        "footnoteFontSizePt": 10,
+        "footnoteAfterPt": 4,
+        "commentAfterPt": 6,
+        "titlePage": {
+            "logoAfterPt": 14,
+            "eyebrowFontSizePt": 11,
+            "eyebrowAfterPt": 10,
+            "collegeAfterPt": 8,
+            "titleAfterPt": 10,
+            "studentAfterPt": 8,
+            "courseFontSizePt": 11,
+            "courseAfterPt": 8,
+            "subtitleFontSizePt": 11,
+            "subtitleBeforePt": 18,
+            "subtitleAfterPt": 8,
+            "noteFontSizePt": 10,
+            "noteAfterPt": 6,
+        },
+    },
 }
 
 DEFAULT_DOCUMENT_STRUCTURE: Dict[str, Any] = {
@@ -45,36 +87,299 @@ DEFAULT_DOCUMENT_STRUCTURE: Dict[str, Any] = {
 }
 
 
-def _normalize_document_settings(value: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+@lru_cache(maxsize=1)
+def _load_shared_document_settings() -> Dict[str, Any]:
+    try:
+        if SHARED_DOCUMENT_SETTINGS_PATH.is_file():
+            return json.loads(SHARED_DOCUMENT_SETTINGS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+
+    return json.loads(json.dumps(FALLBACK_SHARED_DOCUMENT_SETTINGS))
+
+
+def _number(value: Any, fallback: float, minimum: float, maximum: float) -> float:
+    try:
+        return max(minimum, min(maximum, float(value)))
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _normalize_title_page_spacing(value: Any, fallback: Dict[str, Any]) -> Dict[str, Any]:
     source = value if isinstance(value, dict) else {}
+    return {
+        "logoAfterPt": _number(source.get("logoAfterPt"), float(fallback["logoAfterPt"]), 0, 48),
+        "eyebrowFontSizePt": _number(
+            source.get("eyebrowFontSizePt"),
+            float(fallback["eyebrowFontSizePt"]),
+            9,
+            18,
+        ),
+        "eyebrowAfterPt": _number(
+            source.get("eyebrowAfterPt"),
+            float(fallback["eyebrowAfterPt"]),
+            0,
+            36,
+        ),
+        "collegeAfterPt": _number(
+            source.get("collegeAfterPt"), float(fallback["collegeAfterPt"]), 0, 36
+        ),
+        "titleAfterPt": _number(
+            source.get("titleAfterPt"), float(fallback["titleAfterPt"]), 0, 36
+        ),
+        "studentAfterPt": _number(
+            source.get("studentAfterPt"), float(fallback["studentAfterPt"]), 0, 36
+        ),
+        "courseFontSizePt": _number(
+            source.get("courseFontSizePt"),
+            float(fallback["courseFontSizePt"]),
+            9,
+            18,
+        ),
+        "courseAfterPt": _number(
+            source.get("courseAfterPt"), float(fallback["courseAfterPt"]), 0, 36
+        ),
+        "subtitleFontSizePt": _number(
+            source.get("subtitleFontSizePt"),
+            float(fallback["subtitleFontSizePt"]),
+            9,
+            18,
+        ),
+        "subtitleBeforePt": _number(
+            source.get("subtitleBeforePt"),
+            float(fallback["subtitleBeforePt"]),
+            0,
+            48,
+        ),
+        "subtitleAfterPt": _number(
+            source.get("subtitleAfterPt"), float(fallback["subtitleAfterPt"]), 0, 36
+        ),
+        "noteFontSizePt": _number(
+            source.get("noteFontSizePt"), float(fallback["noteFontSizePt"]), 8, 18
+        ),
+        "noteAfterPt": _number(
+            source.get("noteAfterPt"), float(fallback["noteAfterPt"]), 0, 36
+        ),
+    }
 
-    def _number(name: str, fallback: float, minimum: float, maximum: float) -> float:
-        try:
-            return max(minimum, min(maximum, float(source.get(name, fallback))))
-        except (TypeError, ValueError):
-            return fallback
 
-    paragraph_align = str(source.get("paragraphAlign") or DEFAULT_DOCUMENT_SETTINGS["paragraphAlign"]).strip().lower()
+def _normalize_spacing(value: Any, fallback: Dict[str, Any]) -> Dict[str, Any]:
+    source = value if isinstance(value, dict) else {}
+    return {
+        "paragraphAfterPt": _number(
+            source.get("paragraphAfterPt"), float(fallback["paragraphAfterPt"]), 0, 36
+        ),
+        "headingAfterPt": _number(
+            source.get("headingAfterPt"), float(fallback["headingAfterPt"]), 0, 36
+        ),
+        "listAfterPt": _number(
+            source.get("listAfterPt"), float(fallback["listAfterPt"]), 0, 36
+        ),
+        "quoteAfterPt": _number(
+            source.get("quoteAfterPt"), float(fallback["quoteAfterPt"]), 0, 36
+        ),
+        "quoteIndentLeftIn": _number(
+            source.get("quoteIndentLeftIn"),
+            float(fallback["quoteIndentLeftIn"]),
+            0,
+            1.5,
+        ),
+        "quoteIndentRightIn": _number(
+            source.get("quoteIndentRightIn"),
+            float(fallback["quoteIndentRightIn"]),
+            0,
+            1.5,
+        ),
+        "codeLineHeight": _number(
+            source.get("codeLineHeight"), float(fallback["codeLineHeight"]), 1, 2
+        ),
+        "codeAfterPt": _number(
+            source.get("codeAfterPt"), float(fallback["codeAfterPt"]), 0, 36
+        ),
+        "tableFontSizePt": _number(
+            source.get("tableFontSizePt"), float(fallback["tableFontSizePt"]), 9, 18
+        ),
+        "tableAfterPt": _number(
+            source.get("tableAfterPt"), float(fallback["tableAfterPt"]), 0, 36
+        ),
+        "imageAfterPt": _number(
+            source.get("imageAfterPt"), float(fallback["imageAfterPt"]), 0, 36
+        ),
+        "captionFontSizePt": _number(
+            source.get("captionFontSizePt"), float(fallback["captionFontSizePt"]), 8, 18
+        ),
+        "captionAfterPt": _number(
+            source.get("captionAfterPt"), float(fallback["captionAfterPt"]), 0, 36
+        ),
+        "headerFooterFontSizePt": _number(
+            source.get("headerFooterFontSizePt"),
+            float(fallback["headerFooterFontSizePt"]),
+            8,
+            18,
+        ),
+        "equationAfterPt": _number(
+            source.get("equationAfterPt"), float(fallback["equationAfterPt"]), 0, 36
+        ),
+        "referenceFontSizePt": _number(
+            source.get("referenceFontSizePt"),
+            float(fallback["referenceFontSizePt"]),
+            8,
+            18,
+        ),
+        "referenceAfterPt": _number(
+            source.get("referenceAfterPt"), float(fallback["referenceAfterPt"]), 0, 36
+        ),
+        "footnoteFontSizePt": _number(
+            source.get("footnoteFontSizePt"),
+            float(fallback["footnoteFontSizePt"]),
+            8,
+            18,
+        ),
+        "footnoteAfterPt": _number(
+            source.get("footnoteAfterPt"), float(fallback["footnoteAfterPt"]), 0, 36
+        ),
+        "commentAfterPt": _number(
+            source.get("commentAfterPt"), float(fallback["commentAfterPt"]), 0, 36
+        ),
+        "titlePage": _normalize_title_page_spacing(
+            source.get("titlePage"), fallback["titlePage"]
+        ),
+    }
+
+
+def _build_default_document_settings() -> Dict[str, Any]:
+    source = _load_shared_document_settings()
+    heading_sizes = source.get("headingSizes") if isinstance(source.get("headingSizes"), dict) else {}
+    margins = source.get("margins") if isinstance(source.get("margins"), dict) else {}
+    spacing_fallback = FALLBACK_SHARED_DOCUMENT_SETTINGS["spacing"]
+    paragraph_align = str(source.get("paragraphAlign") or "justify").strip().lower()
     if paragraph_align not in {"left", "right", "center", "justify"}:
-        paragraph_align = DEFAULT_DOCUMENT_SETTINGS["paragraphAlign"]
-
-    font_family = str(source.get("fontFamily") or DEFAULT_DOCUMENT_SETTINGS["fontFamily"]).strip() or DEFAULT_DOCUMENT_SETTINGS["fontFamily"]
+        paragraph_align = "justify"
 
     return {
-        "fontFamily": font_family,
-        "bodyFontSize": _number("bodyFontSize", 12, 10, 16),
-        "heading1Size": _number("heading1Size", 18, 14, 28),
-        "heading2Size": _number("heading2Size", 16, 13, 24),
-        "heading3Size": _number("heading3Size", 14, 12, 20),
+        "fontFamily": str(source.get("fontFamily") or "Times New Roman").strip()
+        or "Times New Roman",
+        "bodyFontSize": _number(source.get("bodyFontSize"), 12, 10, 16),
+        "headingSizes": {
+            "title": _number(heading_sizes.get("title"), 22, 18, 34),
+            "h1": _number(heading_sizes.get("h1"), 18, 14, 28),
+            "h2": _number(heading_sizes.get("h2"), 16, 13, 24),
+            "h3": _number(heading_sizes.get("h3"), 14, 12, 20),
+        },
         "paragraphAlign": paragraph_align,
-        "lineSpacing": _number("lineSpacing", 1.5, 1.0, 2.0),
-        "marginTopIn": _number("marginTopIn", 1, 0.5, 2.0),
-        "marginBottomIn": _number("marginBottomIn", 1, 0.5, 2.0),
-        "marginLeftIn": _number("marginLeftIn", 1, 0.5, 2.0),
-        "marginRightIn": _number("marginRightIn", 1, 0.5, 2.0),
-        "pageBreakAfterHeading1": bool(
-            source.get("pageBreakAfterHeading1", True)
+        "lineSpacing": _number(source.get("lineSpacing"), 1.5, 1.0, 2.0),
+        "margins": {
+            "top": _number(margins.get("top"), 1, 0.5, 2.0),
+            "bottom": _number(margins.get("bottom"), 1, 0.5, 2.0),
+            "left": _number(margins.get("left"), 1, 0.5, 2.0),
+            "right": _number(margins.get("right"), 1, 0.5, 2.0),
+            "unit": "in",
+        },
+        "page": {
+            "size": "A4",
+            "widthMm": _number(source.get("page", {}).get("widthMm") if isinstance(source.get("page"), dict) else None, 210, 150, 300),
+            "heightMm": _number(source.get("page", {}).get("heightMm") if isinstance(source.get("page"), dict) else None, 297, 200, 400),
+        },
+        "pageBreakRules": {
+            "heading1StartsNewPage": (
+                bool(source.get("pageBreakRules", {}).get("heading1StartsNewPage"))
+                if isinstance(source.get("pageBreakRules"), dict)
+                and "heading1StartsNewPage" in source.get("pageBreakRules", {})
+                else True
+            )
+        },
+        "spacing": _normalize_spacing(source.get("spacing"), spacing_fallback),
+    }
+
+
+DEFAULT_DOCUMENT_SETTINGS: Dict[str, Any] = _build_default_document_settings()
+
+
+def _normalize_document_settings(value: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    source = value if isinstance(value, dict) else {}
+    defaults = DEFAULT_DOCUMENT_SETTINGS
+    heading_sizes = source.get("headingSizes") if isinstance(source.get("headingSizes"), dict) else {}
+    margins = source.get("margins") if isinstance(source.get("margins"), dict) else {}
+    page = source.get("page") if isinstance(source.get("page"), dict) else {}
+    page_break_rules = (
+        source.get("pageBreakRules") if isinstance(source.get("pageBreakRules"), dict) else {}
+    )
+
+    paragraph_align = str(source.get("paragraphAlign") or defaults["paragraphAlign"]).strip().lower()
+    if paragraph_align not in {"left", "right", "center", "justify"}:
+        paragraph_align = defaults["paragraphAlign"]
+
+    normalized_heading_sizes = {
+        "title": _number(
+            heading_sizes.get("title"), float(defaults["headingSizes"]["title"]), 18, 34
         ),
+        "h1": _number(
+            source.get("heading1Size", heading_sizes.get("h1")),
+            float(defaults["headingSizes"]["h1"]),
+            14,
+            28,
+        ),
+        "h2": _number(
+            source.get("heading2Size", heading_sizes.get("h2")),
+            float(defaults["headingSizes"]["h2"]),
+            13,
+            24,
+        ),
+        "h3": _number(
+            source.get("heading3Size", heading_sizes.get("h3")),
+            float(defaults["headingSizes"]["h3"]),
+            12,
+            20,
+        ),
+    }
+
+    normalized_margins = {
+        "top": _number(source.get("marginTopIn", margins.get("top")), float(defaults["margins"]["top"]), 0.5, 2.0),
+        "bottom": _number(source.get("marginBottomIn", margins.get("bottom")), float(defaults["margins"]["bottom"]), 0.5, 2.0),
+        "left": _number(source.get("marginLeftIn", margins.get("left")), float(defaults["margins"]["left"]), 0.5, 2.0),
+        "right": _number(source.get("marginRightIn", margins.get("right")), float(defaults["margins"]["right"]), 0.5, 2.0),
+        "unit": "in",
+    }
+
+    normalized_page = {
+        "size": "A4",
+        "widthMm": _number(page.get("widthMm"), float(defaults["page"]["widthMm"]), 150, 300),
+        "heightMm": _number(page.get("heightMm"), float(defaults["page"]["heightMm"]), 200, 400),
+    }
+
+    normalized_page_break_rules = {
+        "heading1StartsNewPage": bool(
+            source.get(
+                "pageBreakAfterHeading1",
+                page_break_rules.get(
+                    "heading1StartsNewPage",
+                    defaults["pageBreakRules"]["heading1StartsNewPage"],
+                ),
+            )
+        )
+    }
+
+    normalized_spacing = _normalize_spacing(source.get("spacing"), defaults["spacing"])
+
+    return {
+        "fontFamily": str(source.get("fontFamily") or defaults["fontFamily"]).strip()
+        or defaults["fontFamily"],
+        "bodyFontSize": _number(source.get("bodyFontSize"), float(defaults["bodyFontSize"]), 10, 16),
+        "headingSizes": normalized_heading_sizes,
+        "paragraphAlign": paragraph_align,
+        "lineSpacing": _number(source.get("lineSpacing"), float(defaults["lineSpacing"]), 1.0, 2.0),
+        "margins": normalized_margins,
+        "page": normalized_page,
+        "pageBreakRules": normalized_page_break_rules,
+        "spacing": normalized_spacing,
+        "heading1Size": normalized_heading_sizes["h1"],
+        "heading2Size": normalized_heading_sizes["h2"],
+        "heading3Size": normalized_heading_sizes["h3"],
+        "marginTopIn": normalized_margins["top"],
+        "marginBottomIn": normalized_margins["bottom"],
+        "marginLeftIn": normalized_margins["left"],
+        "marginRightIn": normalized_margins["right"],
+        "pageBreakAfterHeading1": normalized_page_break_rules["heading1StartsNewPage"],
     }
 
 
@@ -102,19 +407,45 @@ def _apply_style_font(style, font_name: str, size_pt: int, bold: Optional[bool] 
 
 def _configure_document(doc: Document, settings: Dict[str, Any]):
     section = doc.sections[0]
-    section.page_width = Inches(8.27)
-    section.page_height = Inches(11.69)
-    section.top_margin = Inches(float(settings["marginTopIn"]))
-    section.bottom_margin = Inches(float(settings["marginBottomIn"]))
-    section.left_margin = Inches(float(settings["marginLeftIn"]))
-    section.right_margin = Inches(float(settings["marginRightIn"]))
+    resolved_settings = _normalize_document_settings(settings)
+    section.page_width = Mm(float(resolved_settings["page"]["widthMm"]))
+    section.page_height = Mm(float(resolved_settings["page"]["heightMm"]))
+    section.top_margin = Inches(float(resolved_settings["margins"]["top"]))
+    section.bottom_margin = Inches(float(resolved_settings["margins"]["bottom"]))
+    section.left_margin = Inches(float(resolved_settings["margins"]["left"]))
+    section.right_margin = Inches(float(resolved_settings["margins"]["right"]))
 
-    font_name = str(settings["fontFamily"])
-    _apply_style_font(doc.styles["Normal"], font_name, size_pt=int(settings["bodyFontSize"]), bold=False)
-    _apply_style_font(doc.styles["Title"], font_name, size_pt=int(settings["heading1Size"]) + 4, bold=True)
-    _apply_style_font(doc.styles["Heading 1"], font_name, size_pt=int(settings["heading1Size"]), bold=True)
-    _apply_style_font(doc.styles["Heading 2"], font_name, size_pt=int(settings["heading2Size"]), bold=True)
-    _apply_style_font(doc.styles["Heading 3"], font_name, size_pt=int(settings["heading3Size"]), bold=True)
+    font_name = str(resolved_settings["fontFamily"])
+    _apply_style_font(
+        doc.styles["Normal"],
+        font_name,
+        size_pt=int(resolved_settings["bodyFontSize"]),
+        bold=False,
+    )
+    _apply_style_font(
+        doc.styles["Title"],
+        font_name,
+        size_pt=int(resolved_settings["headingSizes"]["title"]),
+        bold=True,
+    )
+    _apply_style_font(
+        doc.styles["Heading 1"],
+        font_name,
+        size_pt=int(resolved_settings["headingSizes"]["h1"]),
+        bold=True,
+    )
+    _apply_style_font(
+        doc.styles["Heading 2"],
+        font_name,
+        size_pt=int(resolved_settings["headingSizes"]["h2"]),
+        bold=True,
+    )
+    _apply_style_font(
+        doc.styles["Heading 3"],
+        font_name,
+        size_pt=int(resolved_settings["headingSizes"]["h3"]),
+        bold=True,
+    )
 
 
 def _normalized_text(value: Any, fallback: str) -> str:
@@ -376,7 +707,9 @@ def _add_body_paragraph(
     resolved_settings = _normalize_document_settings(settings)
     paragraph = doc.add_paragraph(text if text else " ")
     paragraph.alignment = _paragraph_alignment(resolved_settings)
-    paragraph.paragraph_format.space_after = Pt(8)
+    paragraph.paragraph_format.space_after = Pt(
+        float(resolved_settings["spacing"]["paragraphAfterPt"])
+    )
     paragraph.paragraph_format.line_spacing = float(resolved_settings.get("lineSpacing") or 1.5)
     paragraph.paragraph_format.first_line_indent = Inches(0)
     if paragraph.runs:
@@ -456,17 +789,23 @@ def _add_image(
         doc.add_picture(image_stream, width=Inches(target_width))
         image_paragraph = doc.paragraphs[-1]
         image_paragraph.alignment = paragraph_alignment
-        image_paragraph.paragraph_format.space_after = Pt(6)
+        image_paragraph.paragraph_format.space_after = Pt(
+            float(resolved_settings["spacing"]["imageAfterPt"])
+        )
 
         caption = doc.add_paragraph(alt)
         caption.alignment = paragraph_alignment
-        caption.paragraph_format.space_after = Pt(10)
+        caption.paragraph_format.space_after = Pt(
+            float(resolved_settings["spacing"]["captionAfterPt"])
+        )
         caption.paragraph_format.first_line_indent = Inches(0)
 
         if caption.runs:
             _set_run_font_name(caption.runs[0], str(resolved_settings["fontFamily"]))
             caption.runs[0].italic = True
-            caption.runs[0].font.size = Pt(10)
+            caption.runs[0].font.size = Pt(
+                float(resolved_settings["spacing"]["captionFontSizePt"])
+            )
     except Exception:
         _add_body_paragraph(doc, f"[Image unavailable: {alt}]", resolved_settings)
 
@@ -477,8 +816,10 @@ def _add_logo(
     image_lookup: Optional[Dict[str, Any]],
     max_width_inches: float,
     requested_width_inches: Optional[float],
+    settings: Optional[Dict[str, Any]] = None,
 ):
     image_stream = _resolve_image_stream(source, image_lookup=image_lookup)
+    resolved_settings = _normalize_document_settings(settings)
     if not image_stream:
         return
 
@@ -487,7 +828,9 @@ def _add_logo(
         doc.add_picture(image_stream, width=Inches(target_width))
         paragraph = doc.paragraphs[-1]
         paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        paragraph.paragraph_format.space_after = Pt(14)
+        paragraph.paragraph_format.space_after = Pt(
+            float(resolved_settings["spacing"]["titlePage"]["logoAfterPt"])
+        )
     except Exception:
         return
 
@@ -516,7 +859,19 @@ def _extract_header_footer_blocks(blocks: List[Dict[str, Any]]):
     return filtered_blocks, header_text, footer_text
 
 
+def _configure_footer_tab_stop(section, paragraph):
+    usable_width = section.page_width - section.left_margin - section.right_margin
+    paragraph.paragraph_format.tab_stops.add_tab_stop(
+        usable_width, WD_TAB_ALIGNMENT.RIGHT
+    )
+
+
 def _set_document_header_footer(doc: Document, header_text: str, footer_text: str, settings: Dict[str, Any]):
+    resolved_settings = _normalize_document_settings(settings)
+    header_footer_font_size = Pt(
+        float(resolved_settings["spacing"]["headerFooterFontSizePt"])
+    )
+
     for section in doc.sections:
         if header_text:
             header = section.header
@@ -524,17 +879,18 @@ def _set_document_header_footer(doc: Document, header_text: str, footer_text: st
             paragraph.text = header_text
             paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
             if paragraph.runs:
-                paragraph.runs[0].font.size = Pt(10)
-                _set_run_font_name(paragraph.runs[0], str(settings["fontFamily"]))
+                paragraph.runs[0].font.size = header_footer_font_size
+                _set_run_font_name(paragraph.runs[0], str(resolved_settings["fontFamily"]))
 
         if footer_text:
             footer = section.footer
             paragraph = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
             paragraph.text = footer_text
             paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            _configure_footer_tab_stop(section, paragraph)
             if paragraph.runs:
-                paragraph.runs[0].font.size = Pt(10)
-                _set_run_font_name(paragraph.runs[0], str(settings["fontFamily"]))
+                paragraph.runs[0].font.size = header_footer_font_size
+                _set_run_font_name(paragraph.runs[0], str(resolved_settings["fontFamily"]))
 
 
 def _render_title_page(
@@ -555,10 +911,13 @@ def _render_title_page(
     subtitle = _normalized_text(title_page_data.get("subtitle"), "")
     note = _normalized_text(title_page_data.get("note"), "")
     logo_width_percent = title_page_data.get("logoWidth")
+    title_page_spacing = settings["spacing"]["titlePage"]
 
     requested_logo_width = None
     if isinstance(logo_width_percent, (int, float)):
-        requested_logo_width = max_width_inches * max(0.15, min(0.7, float(logo_width_percent) / 100.0))
+        requested_logo_width = max_width_inches * max(
+            0.15, min(0.9, float(logo_width_percent) / 100.0)
+        )
 
     logo_source = ""
     if logo_data_url:
@@ -573,63 +932,78 @@ def _render_title_page(
             image_lookup=image_lookup,
             max_width_inches=max_width_inches,
             requested_width_inches=requested_logo_width,
+            settings=settings,
         )
 
     if eyebrow:
         eyebrow_paragraph = doc.add_paragraph(eyebrow)
         eyebrow_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        eyebrow_paragraph.paragraph_format.space_after = Pt(10)
+        eyebrow_paragraph.paragraph_format.space_after = Pt(
+            float(title_page_spacing["eyebrowAfterPt"])
+        )
         if eyebrow_paragraph.runs:
             _set_run_font_name(eyebrow_paragraph.runs[0], str(settings["fontFamily"]))
-            eyebrow_paragraph.runs[0].font.size = Pt(max(10, float(settings["bodyFontSize"]) - 1))
+            eyebrow_paragraph.runs[0].font.size = Pt(
+                float(title_page_spacing["eyebrowFontSizePt"])
+            )
             eyebrow_paragraph.runs[0].bold = True
 
     college = doc.add_paragraph(college_name)
     college.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    college.paragraph_format.space_after = Pt(8)
+    college.paragraph_format.space_after = Pt(float(title_page_spacing["collegeAfterPt"]))
     if college.runs:
         _set_run_font_name(college.runs[0], str(settings["fontFamily"]))
         college.runs[0].font.size = Pt(float(settings["heading3Size"]))
         college.runs[0].bold = True
 
-    doc.add_paragraph("")
-    doc.add_paragraph("")
-
     title = doc.add_paragraph(_normalized_text(document_title, "REPORT"))
     title.style = doc.styles["Title"]
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    title.paragraph_format.space_after = Pt(10)
+    title.paragraph_format.space_after = Pt(float(title_page_spacing["titleAfterPt"]))
 
     student = doc.add_paragraph(student_name)
     student.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    student.paragraph_format.space_after = Pt(float(title_page_spacing["studentAfterPt"]))
     if student.runs:
         _set_run_font_name(student.runs[0], str(settings["fontFamily"]))
         student.runs[0].font.size = Pt(float(settings["bodyFontSize"]))
 
     if course:
-        doc.add_paragraph("")
         course_para = doc.add_paragraph(course)
         course_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        course_para.paragraph_format.space_after = Pt(
+            float(title_page_spacing["courseAfterPt"])
+        )
         if course_para.runs:
             _set_run_font_name(course_para.runs[0], str(settings["fontFamily"]))
-            course_para.runs[0].font.size = Pt(max(10, float(settings["bodyFontSize"]) - 1))
+            course_para.runs[0].font.size = Pt(
+                float(title_page_spacing["courseFontSizePt"])
+            )
 
     if subtitle:
         subtitle_para = doc.add_paragraph(subtitle)
         subtitle_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        subtitle_para.paragraph_format.space_before = Pt(18)
-        subtitle_para.paragraph_format.space_after = Pt(8)
+        subtitle_para.paragraph_format.space_before = Pt(
+            float(title_page_spacing["subtitleBeforePt"])
+        )
+        subtitle_para.paragraph_format.space_after = Pt(
+            float(title_page_spacing["subtitleAfterPt"])
+        )
         if subtitle_para.runs:
             _set_run_font_name(subtitle_para.runs[0], str(settings["fontFamily"]))
-            subtitle_para.runs[0].font.size = Pt(max(10, float(settings["bodyFontSize"]) - 1))
+            subtitle_para.runs[0].font.size = Pt(
+                float(title_page_spacing["subtitleFontSizePt"])
+            )
 
     if note:
         note_para = doc.add_paragraph(note)
         note_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        note_para.paragraph_format.space_after = Pt(6)
+        note_para.paragraph_format.space_after = Pt(float(title_page_spacing["noteAfterPt"]))
         if note_para.runs:
             _set_run_font_name(note_para.runs[0], str(settings["fontFamily"]))
-            note_para.runs[0].font.size = Pt(max(10, float(settings["bodyFontSize"]) - 2))
+            note_para.runs[0].font.size = Pt(
+                float(title_page_spacing["noteFontSizePt"])
+            )
 
 
 def _extract_plain_text(value: Any, fallback: str) -> str:
@@ -857,8 +1231,12 @@ def _render_code_block(doc: Document, code_text: str, settings: Optional[Dict[st
         paragraph = doc.add_paragraph(line if line else " ")
         paragraph.paragraph_format.left_indent = Inches(0.35)
         paragraph.paragraph_format.right_indent = Inches(0.25)
-        paragraph.paragraph_format.space_after = Pt(2)
-        paragraph.paragraph_format.line_spacing = 1.0
+        paragraph.paragraph_format.space_after = Pt(
+            float(resolved_settings["spacing"]["codeAfterPt"])
+        )
+        paragraph.paragraph_format.line_spacing = float(
+            resolved_settings["spacing"]["codeLineHeight"]
+        )
         paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
 
         run = paragraph.runs[0] if paragraph.runs else paragraph.add_run(" ")
@@ -901,7 +1279,7 @@ def _render_table_block(doc: Document, rows: Any, settings: Optional[Dict[str, A
                 paragraph.paragraph_format.space_after = Pt(0)
                 for run in paragraph.runs:
                     _set_run_font_name(run, str(resolved_settings["fontFamily"]))
-                    run.font.size = Pt(max(10, float(resolved_settings["bodyFontSize"]) - 1))
+                    run.font.size = Pt(float(resolved_settings["spacing"]["tableFontSizePt"]))
 
     doc.add_paragraph("")
 
@@ -1001,10 +1379,15 @@ def _collect_footnote_lookup(blocks: List[Dict[str, Any]]) -> Dict[str, Dict[str
     return lookup
 
 
-def _render_equation_block(doc: Document, latex: str, label: str):
+def _render_equation_block(
+    doc: Document, latex: str, label: str, settings: Optional[Dict[str, Any]] = None
+):
+    resolved_settings = _normalize_document_settings(settings)
     paragraph = doc.add_paragraph()
     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    paragraph.paragraph_format.space_after = Pt(8)
+    paragraph.paragraph_format.space_after = Pt(
+        float(resolved_settings["spacing"]["equationAfterPt"])
+    )
 
     equation_run = paragraph.add_run(latex if latex else "E = mc^2")
     _set_run_font_name(equation_run, "Cambria Math")
@@ -1018,10 +1401,15 @@ def _render_equation_block(doc: Document, latex: str, label: str):
         label_run.italic = True
 
 
-def _append_reference_section(doc: Document, reference_lookup: Dict[str, Dict[str, Any]]):
+def _append_reference_section(
+    doc: Document,
+    reference_lookup: Dict[str, Dict[str, Any]],
+    settings: Optional[Dict[str, Any]] = None,
+):
     if not reference_lookup:
         return
 
+    resolved_settings = _normalize_document_settings(settings)
     doc.add_paragraph("")
     heading = doc.add_heading("References", level=1)
     heading.alignment = WD_ALIGN_PARAGRAPH.LEFT
@@ -1029,14 +1417,25 @@ def _append_reference_section(doc: Document, reference_lookup: Dict[str, Dict[st
     ordered_items = sorted(reference_lookup.items(), key=lambda item: item[1]["index"])
     for _, reference in ordered_items:
         paragraph = doc.add_paragraph(f"[{reference['index']}] {reference['source']}")
-        paragraph.paragraph_format.space_after = Pt(6)
+        paragraph.paragraph_format.space_after = Pt(
+            float(resolved_settings["spacing"]["referenceAfterPt"])
+        )
         paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        if paragraph.runs:
+            paragraph.runs[0].font.size = Pt(
+                float(resolved_settings["spacing"]["referenceFontSizePt"])
+            )
 
 
-def _append_footnote_section(doc: Document, footnote_lookup: Dict[str, Dict[str, Any]]):
+def _append_footnote_section(
+    doc: Document,
+    footnote_lookup: Dict[str, Dict[str, Any]],
+    settings: Optional[Dict[str, Any]] = None,
+):
     if not footnote_lookup:
         return
 
+    resolved_settings = _normalize_document_settings(settings)
     doc.add_paragraph("")
     heading = doc.add_heading("Footnotes", level=1)
     heading.alignment = WD_ALIGN_PARAGRAPH.LEFT
@@ -1044,17 +1443,26 @@ def _append_footnote_section(doc: Document, footnote_lookup: Dict[str, Dict[str,
     ordered_items = sorted(footnote_lookup.items(), key=lambda item: item[1]["index"])
     for _, footnote in ordered_items:
         paragraph = doc.add_paragraph(f"{footnote['index']}. {footnote['content']}")
-        paragraph.paragraph_format.space_after = Pt(4)
+        paragraph.paragraph_format.space_after = Pt(
+            float(resolved_settings["spacing"]["footnoteAfterPt"])
+        )
         paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
 
         if paragraph.runs:
-            paragraph.runs[0].font.size = Pt(10)
+            paragraph.runs[0].font.size = Pt(
+                float(resolved_settings["spacing"]["footnoteFontSizePt"])
+            )
 
 
-def _append_comment_section(doc: Document, comments: Optional[List[Dict[str, Any]]]):
+def _append_comment_section(
+    doc: Document,
+    comments: Optional[List[Dict[str, Any]]],
+    settings: Optional[Dict[str, Any]] = None,
+):
     if not comments:
         return
 
+    resolved_settings = _normalize_document_settings(settings)
     normalized_comments = [comment for comment in comments if isinstance(comment, dict)]
     if not normalized_comments:
         return
@@ -1076,7 +1484,9 @@ def _append_comment_section(doc: Document, comments: Optional[List[Dict[str, Any
             prefix = f"{prefix} (Block {block_id})"
 
         paragraph = doc.add_paragraph(f"{prefix}: {text}")
-        paragraph.paragraph_format.space_after = Pt(6)
+        paragraph.paragraph_format.space_after = Pt(
+            float(resolved_settings["spacing"]["commentAfterPt"])
+        )
         paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
 
 
@@ -1107,7 +1517,7 @@ def _render_document_blocks(
             continue
 
         if block_type == "heading1":
-            if rendered_content_blocks > 0 and resolved_settings.get("pageBreakAfterHeading1"):
+            if rendered_content_blocks > 0 and resolved_settings["pageBreakRules"]["heading1StartsNewPage"]:
                 doc.add_page_break()
             title_text = _extract_plain_text(
                 raw_block.get("html") or raw_block.get("content") or raw_block.get("title"),
@@ -1193,9 +1603,15 @@ def _render_document_blocks(
             )
             quote_paragraph = doc.add_paragraph(quote_text)
             quote_paragraph.alignment = _paragraph_alignment(resolved_settings)
-            quote_paragraph.paragraph_format.left_indent = Inches(0.35)
-            quote_paragraph.paragraph_format.right_indent = Inches(0.2)
-            quote_paragraph.paragraph_format.space_after = Pt(8)
+            quote_paragraph.paragraph_format.left_indent = Inches(
+                float(resolved_settings["spacing"]["quoteIndentLeftIn"])
+            )
+            quote_paragraph.paragraph_format.right_indent = Inches(
+                float(resolved_settings["spacing"]["quoteIndentRightIn"])
+            )
+            quote_paragraph.paragraph_format.space_after = Pt(
+                float(resolved_settings["spacing"]["quoteAfterPt"])
+            )
             quote_paragraph.paragraph_format.line_spacing = float(resolved_settings["lineSpacing"])
 
             if quote_paragraph.runs:
@@ -1219,7 +1635,7 @@ def _render_document_blocks(
         if block_type == "equation":
             latex = str(raw_block.get("latex") or "").strip()
             label = str(raw_block.get("label") or "").strip()
-            _render_equation_block(doc, latex, label)
+            _render_equation_block(doc, latex, label, resolved_settings)
             rendered_content_blocks += 1
             continue
 
@@ -1274,9 +1690,9 @@ def _render_document_blocks(
         )
         rendered_content_blocks += 1
 
-    _append_reference_section(doc, reference_lookup)
-    _append_footnote_section(doc, footnote_lookup)
-    _append_comment_section(doc, comments)
+    _append_reference_section(doc, reference_lookup, resolved_settings)
+    _append_footnote_section(doc, footnote_lookup, resolved_settings)
+    _append_comment_section(doc, comments, resolved_settings)
 
 
 def _merge_inline_style(inherited_style: Dict[str, Any], element) -> Dict[str, Any]:
@@ -1349,7 +1765,9 @@ def _render_list_block(doc: Document, block, ordered: bool, settings: Optional[D
 
     for item in block.xpath("./li"):
         paragraph = doc.add_paragraph(style="List Number" if ordered else "List Bullet")
-        paragraph.paragraph_format.space_after = Pt(8)
+        paragraph.paragraph_format.space_after = Pt(
+            float(resolved_settings["spacing"]["listAfterPt"])
+        )
         paragraph.paragraph_format.line_spacing = float(resolved_settings["lineSpacing"])
 
         item_styles = _parse_style_map(item.get("style", ""))
@@ -1417,7 +1835,9 @@ def _render_html_block(
         heading_level = int(tag[1]) if tag[1].isdigit() else 2
         heading_level = min(max(1, heading_level), 3)
         heading = doc.add_heading("", level=heading_level)
-        heading.paragraph_format.space_after = Pt(8)
+        heading.paragraph_format.space_after = Pt(
+            float(resolved_settings["spacing"]["headingAfterPt"])
+        )
         _render_inline_nodes(
             heading,
             block,
@@ -1593,9 +2013,10 @@ def _apply_page_numbers(doc: Document):
     for section in doc.sections:
         footer = section.footer
         paragraph = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
-        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        _configure_footer_tab_stop(section, paragraph)
         if paragraph.text.strip():
-            paragraph.add_run("   ")
+            paragraph.add_run("\t")
         _add_page_number_field(paragraph)
 
 

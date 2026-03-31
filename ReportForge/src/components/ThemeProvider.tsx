@@ -4,8 +4,8 @@ import {
   createContext,
   useContext,
   useEffect,
-  useMemo,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 
@@ -44,16 +44,15 @@ const applyTheme = (theme: ThemeMode) => {
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<ThemeMode>(() => resolveInitialTheme());
-  const [mounted, setMounted] = useState(false);
+  const mounted = useSyncExternalStore(
+    () => () => undefined,
+    () => true,
+    () => false
+  );
 
   useEffect(() => {
     applyTheme(theme);
   }, [theme]);
-
-  useEffect(() => {
-    // mark as mounted on client to avoid SSR/client render mismatches
-    setMounted(true);
-  }, []);
 
   const setTheme = (nextTheme: ThemeMode) => {
     setThemeState(nextTheme);
@@ -63,16 +62,13 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     applyTheme(nextTheme);
   };
 
-  const value = useMemo<ThemeContextValue>(
-    () => ({
-      theme,
-      isDark: theme === "dark",
-      setTheme,
-      toggleTheme: () => setTheme(theme === "dark" ? "light" : "dark"),
-      mounted,
-    }),
-    [theme]
-  );
+  const value: ThemeContextValue = {
+    theme,
+    isDark: theme === "dark",
+    setTheme,
+    toggleTheme: () => setTheme(theme === "dark" ? "light" : "dark"),
+    mounted,
+  };
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }

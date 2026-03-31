@@ -24,6 +24,8 @@ interface ToastOptions {
   description?: string;
   variant?: ToastVariant;
   durationMs?: number;
+  actionLabel?: string;
+  onAction?: () => void;
 }
 
 interface ToastEntry extends ToastOptions {
@@ -86,6 +88,18 @@ function ToastCard({
           {toast.description ? (
             <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">{toast.description}</p>
           ) : null}
+          {toast.actionLabel && toast.onAction ? (
+            <button
+              type="button"
+              onClick={() => {
+                toast.onAction?.();
+                onDismiss(toast.id);
+              }}
+              className="mt-3 text-sm font-semibold text-blue-600 transition hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+            >
+              {toast.actionLabel}
+            </button>
+          ) : null}
         </div>
         <button
           type="button"
@@ -112,9 +126,14 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     description,
     variant = "info",
     durationMs = 4500,
+    actionLabel,
+    onAction,
   }: ToastOptions) => {
     const id = createToastId();
-    setToasts((current) => [...current, { id, title, description, variant, durationMs }]);
+    setToasts((current) => [
+      ...current.slice(-3),
+      { id, title, description, variant, durationMs, actionLabel, onAction },
+    ]);
   }, []);
 
   const value = useMemo(

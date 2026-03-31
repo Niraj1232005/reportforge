@@ -49,9 +49,79 @@ export interface TemplateStructureSection {
   subsections: Array<string | TemplateStructureSubsection>;
 }
 
+export interface DocumentHeadingSizes {
+  title: number;
+  h1: number;
+  h2: number;
+  h3: number;
+}
+
+export interface DocumentMargins {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+  unit: "in";
+}
+
+export interface DocumentPageSettings {
+  size: "A4";
+  widthMm: number;
+  heightMm: number;
+}
+
+export interface DocumentPageBreakRules {
+  heading1StartsNewPage: boolean;
+}
+
+export interface TitlePageSpacingSettings {
+  logoAfterPt: number;
+  eyebrowFontSizePt: number;
+  eyebrowAfterPt: number;
+  collegeAfterPt: number;
+  titleAfterPt: number;
+  studentAfterPt: number;
+  courseFontSizePt: number;
+  courseAfterPt: number;
+  subtitleFontSizePt: number;
+  subtitleBeforePt: number;
+  subtitleAfterPt: number;
+  noteFontSizePt: number;
+  noteAfterPt: number;
+}
+
+export interface DocumentSpacingSettings {
+  paragraphAfterPt: number;
+  headingAfterPt: number;
+  listAfterPt: number;
+  quoteAfterPt: number;
+  quoteIndentLeftIn: number;
+  quoteIndentRightIn: number;
+  codeLineHeight: number;
+  codeAfterPt: number;
+  tableFontSizePt: number;
+  tableAfterPt: number;
+  imageAfterPt: number;
+  captionFontSizePt: number;
+  captionAfterPt: number;
+  headerFooterFontSizePt: number;
+  equationAfterPt: number;
+  referenceFontSizePt: number;
+  referenceAfterPt: number;
+  footnoteFontSizePt: number;
+  footnoteAfterPt: number;
+  commentAfterPt: number;
+  titlePage: TitlePageSpacingSettings;
+}
+
 export interface DocumentStyleSettings {
   fontFamily: string;
   bodyFontSize: number;
+  headingSizes: DocumentHeadingSizes;
+  margins: DocumentMargins;
+  page: DocumentPageSettings;
+  pageBreakRules: DocumentPageBreakRules;
+  spacing: DocumentSpacingSettings;
   heading1Size: number;
   heading2Size: number;
   heading3Size: number;
@@ -248,6 +318,7 @@ export interface ReportRecord {
   content: EditorDraftData;
   created_at: string;
   updated_at: string;
+  is_optimistic?: boolean;
 }
 
 export interface UserProfile {
@@ -258,6 +329,9 @@ export interface UserProfile {
   created_at?: string;
   updated_at?: string;
 }
+
+export type ProfileUpdateInput = Pick<UserProfile, "full_name" | "default_font"> &
+  Partial<Pick<UserProfile, "college_name">>;
 
 export type DocumentBlock =
   | RichTextBlock

@@ -173,7 +173,7 @@ export const sanitizeSingleLineText = (
 
 export const sanitizeSafeRedirectPath = (
   value: string | null | undefined,
-  fallback = "/templates"
+  fallback = "/dashboard"
 ) => {
   const candidate = String(value || "").trim();
   if (!candidate.startsWith("/")) {

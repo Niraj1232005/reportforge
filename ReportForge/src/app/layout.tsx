@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { AuthProvider } from "@/components/AuthProvider";
+import { DataProvider } from "@/components/DataProvider";
 import AppShell from "@/components/AppShell";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { ToastProvider } from "@/components/ToastProvider";
@@ -20,9 +21,11 @@ export default function RootLayout({
       <body className="bg-app antialiased text-app">
         <ThemeProvider>
           <ToastProvider>
-            <AuthProvider>
-              <AppShell>{children}</AppShell>
-            </AuthProvider>
+            <DataProvider>
+              <AuthProvider>
+                <AppShell>{children}</AppShell>
+              </AuthProvider>
+            </DataProvider>
           </ToastProvider>
         </ThemeProvider>
       </body>

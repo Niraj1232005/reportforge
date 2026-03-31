@@ -4,7 +4,9 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   Github,
   LoaderCircle,
+  LockKeyhole,
   Mail,
+  ShieldCheck,
   UserRound,
   X,
 } from "lucide-react";
@@ -94,18 +96,23 @@ export default function AuthModal({
           >
             <div className="mb-5 flex items-start justify-between gap-4">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-600 dark:text-blue-400">
+                <div className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-700 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-300">
+                  <LockKeyhole className="h-3.5 w-3.5" />
                   Secure Login
-                </p>
+                </div>
                 <h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-slate-100">
                   {title}
                 </h2>
                 <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">{message}</p>
+                <p className="mt-3 inline-flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                  <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" />
+                  OAuth and session handling stay scoped to your account.
+                </p>
               </div>
               <button
                 type="button"
                 onClick={onClose}
-                className="rounded-xl border border-slate-200 p-2 text-slate-500 transition hover:bg-slate-100 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-800"
+                className="rounded-xl border border-slate-200 p-2 text-slate-500 transition duration-200 hover:bg-slate-100 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-800"
                 aria-label="Close login dialog"
               >
                 <X className="h-4 w-4" />
@@ -117,7 +124,7 @@ export default function AuthModal({
                 type="button"
                 onClick={() => void onGoogle()}
                 disabled={isBusy}
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition duration-200 hover:-translate-y-0.5 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
               >
                 {pendingAction === "google" ? (
                   <LoaderCircle className="h-4 w-4 animate-spin" />
@@ -131,7 +138,7 @@ export default function AuthModal({
                 type="button"
                 onClick={() => void onGithub()}
                 disabled={isBusy}
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition duration-200 hover:-translate-y-0.5 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
               >
                 {pendingAction === "github" ? (
                   <LoaderCircle className="h-4 w-4 animate-spin" />
@@ -219,7 +226,7 @@ export default function AuthModal({
               <button
                 type="submit"
                 disabled={isBusy}
-                className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70"
+                className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition duration-200 hover:-translate-y-0.5 hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70"
               >
                 {pendingAction === "email-login" || pendingAction === "email-signup" ? (
                   <LoaderCircle className="h-4 w-4 animate-spin" />
@@ -247,7 +254,7 @@ export default function AuthModal({
                 type="button"
                 onClick={onContinueAsGuest}
                 disabled={isBusy}
-                className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70"
+                className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition duration-200 hover:-translate-y-0.5 hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70"
               >
                 <UserRound className="h-4 w-4" />
                 Continue as Guest

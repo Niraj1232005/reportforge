@@ -1,6 +1,6 @@
 import { normalizeDocumentStructureSettings } from "@/lib/document-config";
 import { normalizeDocumentSettings } from "@/lib/document-settings";
-import { sanitizeSingleLineText } from "@/lib/sanitize";
+import { sanitizeSafeRedirectPath, sanitizeSingleLineText } from "@/lib/sanitize";
 import type { EditorDraftData, UserProfile } from "@/types/editor";
 
 export const GUEST_DRAFT_STORAGE_KEY = "guest_draft";
@@ -8,6 +8,9 @@ export const ACTIVE_USER_STORAGE_KEY = "reportforge_active_user";
 const LEGACY_DRAFT_STORAGE_PREFIX = "reportforge-doc:";
 const USER_DRAFT_STORAGE_PREFIX = "reportforge_";
 const USER_DRAFT_KEY_PATTERN = /^reportforge_[0-9a-f-]{20,}$/i;
+const USER_LAST_EDITOR_STORAGE_PREFIX = "reportforge_last_editor_";
+const USER_LAST_EDITOR_KEY_PATTERN = /^reportforge_last_editor_[0-9a-f-]{20,}$/i;
+const GUEST_LAST_EDITOR_STORAGE_KEY = "reportforge_last_editor_guest";
 
 const parseJson = <T>(value: string | null): T | null => {
   if (!value) {
@@ -23,6 +26,12 @@ const parseJson = <T>(value: string | null): T | null => {
 
 export const getUserDraftStorageKey = (userId: string) => {
   return `${USER_DRAFT_STORAGE_PREFIX}${userId}`;
+};
+
+const getLastEditorStorageKey = (userId?: string | null) => {
+  return userId
+    ? `${USER_LAST_EDITOR_STORAGE_PREFIX}${userId}`
+    : GUEST_LAST_EDITOR_STORAGE_KEY;
 };
 
 export const normalizeDraftData = (
@@ -101,13 +110,18 @@ export const clearDraftCachesForLogin = (userId: string) => {
 
   const keys = Object.keys(window.localStorage);
   keys.forEach((key) => {
-    if (USER_DRAFT_KEY_PATTERN.test(key) && key !== getUserDraftStorageKey(userId)) {
+    if (
+      (USER_DRAFT_KEY_PATTERN.test(key) && key !== getUserDraftStorageKey(userId)) ||
+      (USER_LAST_EDITOR_KEY_PATTERN.test(key) &&
+        key !== getLastEditorStorageKey(userId))
+    ) {
       window.localStorage.removeItem(key);
     }
   });
 
+  window.localStorage.removeItem(GUEST_LAST_EDITOR_STORAGE_KEY);
   window.localStorage.setItem(ACTIVE_USER_STORAGE_KEY, userId);
-}
+};
 
 export const readGuestDraft = <T>(templateId: string) => {
   if (typeof window === "undefined") {
@@ -141,6 +155,11 @@ export const writeGuestDraft = (templateId: string, draft: EditorDraftData) => {
 
 export const readUserDraft = <T>(userId: string, templateId: string) => {
   if (typeof window === "undefined") {
+    return null as T | null;
+  }
+
+  const activeUserId = window.localStorage.getItem(ACTIVE_USER_STORAGE_KEY);
+  if (activeUserId && activeUserId !== userId) {
     return null as T | null;
   }
 
@@ -179,6 +198,33 @@ export const writeUserDraft = (
     })
   );
   window.localStorage.setItem(ACTIVE_USER_STORAGE_KEY, userId);
+};
+
+export const readLastEditorPath = (userId?: string | null) => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const rawValue = window.localStorage.getItem(getLastEditorStorageKey(userId));
+  const safePath = sanitizeSafeRedirectPath(rawValue, "");
+  return safePath || null;
+};
+
+export const writeLastEditorPath = (path: string, userId?: string | null) => {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const safePath = sanitizeSafeRedirectPath(path, "");
+  if (!safePath) {
+    return;
+  }
+
+  window.localStorage.setItem(getLastEditorStorageKey(userId), safePath);
+
+  if (userId) {
+    window.localStorage.setItem(ACTIVE_USER_STORAGE_KEY, userId);
+  }
 };
 
 export const clearBrowserSessionStorage = () => {

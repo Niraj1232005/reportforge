@@ -5,16 +5,20 @@ import Link from "next/link";
 import { LoaderCircle } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { exchangeOAuthCodeForSession, getCurrentSession } from "@/lib/auth";
+import {
+  DEFAULT_POST_LOGIN_REDIRECT,
+  HOME_ROUTE,
+} from "@/lib/routes";
 import { sanitizeSafeRedirectPath } from "@/lib/sanitize";
 
 const readPendingRedirect = () => {
   if (typeof window === "undefined") {
-    return "/templates";
+    return DEFAULT_POST_LOGIN_REDIRECT;
   }
 
   return sanitizeSafeRedirectPath(
     window.sessionStorage.getItem("reportforge-auth-redirect"),
-    "/templates"
+    DEFAULT_POST_LOGIN_REDIRECT
   );
 };
 
@@ -89,10 +93,10 @@ function AuthCallbackContent() {
             {errorMessage}
           </p>
           <Link
-            href="/templates"
+            href={HOME_ROUTE}
             className="mt-6 inline-flex rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700"
           >
-            Back to Templates
+            Back to Home
           </Link>
         </div>
       </main>

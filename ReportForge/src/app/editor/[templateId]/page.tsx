@@ -25,6 +25,8 @@ import BlockEditor from "@/components/BlockEditor";
 import OutlinePanel from "@/components/OutlinePanel";
 import PreviewPane from "@/components/PreviewPane";
 import { useToast } from "@/components/ToastProvider";
+import { mutateUserReports } from "@/hooks/useUserReports";
+import { resolveBackendBaseUrl } from "@/lib/backend-url";
 import {
   createBlock,
   createNodeId,
@@ -41,6 +43,7 @@ import {
   normalizeDraftData,
   readGuestDraft,
   readUserDraft,
+  writeLastEditorPath,
   writeGuestDraft,
   writeUserDraft,
 } from "@/lib/editor-storage";
@@ -49,8 +52,10 @@ import {
   DEFAULT_FONT_LIBRARY,
   normalizeDocumentSettings,
   normalizeFontLibrary,
+  patchDocumentSettings,
   readFontLibraryFromStorage,
 } from "@/lib/document-settings";
+import { buildEditorRoute, TEMPLATES_ROUTE } from "@/lib/routes";
 import { sanitizeRichTextHtml } from "@/lib/sanitize";
 import { fetchTemplateByIdFromSource } from "@/lib/template-service";
 import { getReportForUser, saveReportForUser } from "@/lib/user-data";
@@ -61,6 +66,7 @@ import type {
   EditorDraftData,
   ReportComment,
   ReportImage,
+  ReportRecord,
   ReportTemplate,
   UserProfile,
 } from "@/types/editor";
@@ -179,6 +185,20 @@ const formatSavedTime = (value: string | null) => {
   })}`;
 };
 
+const upsertReportInList = (
+  reports: ReportRecord[] | undefined,
+  nextReport: ReportRecord,
+  aliasIds: string[] = []
+) => {
+  const current = reports ?? [];
+  const allMatchIds = new Set([nextReport.id, ...aliasIds]);
+  const withoutMatch = current.filter((report) => !allMatchIds.has(report.id));
+  return [nextReport, ...withoutMatch].sort(
+    (left, right) =>
+      new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime()
+  );
+};
+
 const ResizeHandle = () => (
   <Separator className="rf-print-hide group relative mx-2 hidden w-2 shrink-0 xl:block">
     <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-slate-200 transition group-hover:bg-blue-300 dark:bg-slate-800 dark:group-hover:bg-blue-700" />
@@ -197,17 +217,21 @@ export default function EditorPage() {
   const reportIdFromUrl = searchParams.get("reportId");
   const { loading: authLoading, openLoginModal, profile, user } = useAuth();
   const { showToast } = useToast();
-  const backendBaseUrl = (process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:5000")
-    .trim()
-    .replace(/\/$/, "");
+  const backendBaseUrl = resolveBackendBaseUrl();
   const editorPanelRef = useRef<HTMLDivElement | null>(null);
   const logoInputRef = useRef<HTMLInputElement | null>(null);
+  const previousUserIdRef = useRef<string | null>(null);
+  const hasHydratedDraftRef = useRef(false);
+  const lastSavedSignatureRef = useRef<string | null>(null);
+  const currentDraftRef = useRef<EditorDraftData | null>(null);
+  const profileRef = useRef<UserProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [isSavingReport, setIsSavingReport] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
+  const [queuedSaveAt, setQueuedSaveAt] = useState<string | null>(null);
   const [activeReportId, setActiveReportId] = useState<string | null>(reportIdFromUrl);
   const [documentTitle, setDocumentTitle] = useState("Report");
   const [titlePage, setTitlePage] = useState<TitlePageState>(DEFAULT_TITLE_PAGE);
@@ -245,11 +269,12 @@ export default function EditorPage() {
   );
 
   const currentPath = useMemo(() => {
-    if (!reportIdFromUrl) {
+    if (!templateId) {
       return pathname;
     }
-    return `${pathname}?reportId=${reportIdFromUrl}`;
-  }, [pathname, reportIdFromUrl]);
+
+    return buildEditorRoute(templateId, reportIdFromUrl);
+  }, [pathname, reportIdFromUrl, templateId]);
 
   const titlePageForPreview = useMemo(
     () => ({
@@ -314,6 +339,14 @@ export default function EditorPage() {
     [draftPayload]
   );
 
+  useEffect(() => {
+    currentDraftRef.current = draftPayload;
+  }, [draftPayload]);
+
+  useEffect(() => {
+    profileRef.current = profile ?? null;
+  }, [profile]);
+
   const scrollToBlock = useCallback((blockId: string) => {
     requestAnimationFrame(() => {
       const element = editorPanelRef.current?.querySelector(
@@ -358,8 +391,20 @@ export default function EditorPage() {
           throw new Error("Template not found.");
         }
 
+        const fallbackDraft = createFallbackDraft(
+          template,
+          templateId,
+          profileRef.current
+        );
+        const shouldPreserveCurrentDraft =
+          previousUserIdRef.current === null &&
+          Boolean(user?.id) &&
+          !reportIdFromUrl &&
+          hasHydratedDraftRef.current &&
+          currentDraftRef.current?.templateId === templateId;
         let nextReportId = reportIdFromUrl;
-        let nextDraft = createFallbackDraft(template, templateId);
+        let nextDraft = fallbackDraft;
+        let nextSavedAt: string | null = null;
 
         if (user?.id && reportIdFromUrl) {
           const report = await getReportForUser(user.id, reportIdFromUrl);
@@ -367,32 +412,62 @@ export default function EditorPage() {
             throw new Error("The selected report could not be loaded.");
           }
 
-          nextDraft = normalizeDraftData(templateId, report.content, nextDraft);
+          nextDraft = normalizeDraftData(
+            templateId,
+            report.content,
+            fallbackDraft,
+            profileRef.current
+          );
           nextReportId = report.id;
-          setLastSavedAt(report.updated_at);
+          nextSavedAt = report.updated_at;
+          lastSavedSignatureRef.current = JSON.stringify(
+            buildDraftPayload(templateId, nextDraft)
+          );
+        } else if (shouldPreserveCurrentDraft && currentDraftRef.current) {
+          nextDraft = normalizeDraftData(
+            templateId,
+            currentDraftRef.current,
+            fallbackDraft,
+            profileRef.current
+          );
+          lastSavedSignatureRef.current = null;
         } else if (user?.id) {
           const savedDraft = readUserDraft<Partial<EditorDraftData>>(
             user.id,
             templateId
           );
           if (savedDraft) {
-            nextDraft = normalizeDraftData(templateId, savedDraft, nextDraft);
+            nextDraft = normalizeDraftData(
+              templateId,
+              savedDraft,
+              fallbackDraft,
+              profileRef.current
+            );
           }
-          setLastSavedAt(null);
+          lastSavedSignatureRef.current = null;
         } else {
           const guestDraft = readGuestDraft<Partial<EditorDraftData>>(templateId);
           if (guestDraft) {
-            nextDraft = normalizeDraftData(templateId, guestDraft, nextDraft);
+            nextDraft = normalizeDraftData(
+              templateId,
+              guestDraft,
+              fallbackDraft,
+              profileRef.current
+            );
           }
           nextReportId = null;
-          setLastSavedAt(null);
+          lastSavedSignatureRef.current = null;
         }
 
         if (cancelled) {
           return;
         }
 
+        hasHydratedDraftRef.current = true;
+        previousUserIdRef.current = user?.id ?? null;
         setActiveReportId(nextReportId);
+        setLastSavedAt(nextSavedAt);
+        setQueuedSaveAt(null);
         setDocumentTitle(nextDraft.title);
         setTitlePage(nextDraft.titlePage);
         setBlocks(ensureDocumentBlocks(nextDraft.blocks));
@@ -431,7 +506,13 @@ export default function EditorPage() {
     return () => {
       cancelled = true;
     };
-  }, [authLoading, reportIdFromUrl, showToast, templateId, user?.id]);
+  }, [
+    authLoading,
+    reportIdFromUrl,
+    showToast,
+    templateId,
+    user?.id,
+  ]);
 
   useEffect(() => {
     if (isLoading || !profile) {
@@ -453,7 +534,9 @@ export default function EditorPage() {
     if (profile.default_font) {
       setDocumentSettings((current) => {
         if (!current.fontFamily || current.fontFamily === DEFAULT_DOCUMENT_SETTINGS.fontFamily) {
-          return { ...current, fontFamily: profile.default_font };
+          return patchDocumentSettings(current, {
+            fontFamily: profile.default_font,
+          });
         }
 
         return current;
@@ -485,8 +568,30 @@ export default function EditorPage() {
       return;
     }
 
+    if (draftSignature === lastSavedSignatureRef.current) {
+      return;
+    }
+
     let cancelled = false;
     const timer = window.setTimeout(async () => {
+      const optimisticTimestamp = new Date().toISOString();
+      const optimisticReportId = activeReportId ?? `draft-${templateId}`;
+      const optimisticReport: ReportRecord = {
+        id: optimisticReportId,
+        user_id: user.id,
+        title: draftPayload.title,
+        content: draftPayload,
+        created_at: optimisticTimestamp,
+        updated_at: optimisticTimestamp,
+        is_optimistic: true,
+      };
+
+      setQueuedSaveAt(optimisticTimestamp);
+      void mutateUserReports(
+        user.id,
+        (current) => upsertReportInList(current, optimisticReport),
+        false
+      );
       setIsSavingReport(true);
       try {
         const savedReport = await saveReportForUser(
@@ -500,10 +605,21 @@ export default function EditorPage() {
 
         setActiveReportId(savedReport.id);
         setLastSavedAt(savedReport.updated_at);
+        setQueuedSaveAt(null);
+        lastSavedSignatureRef.current = draftSignature;
         setActionError(null);
+        void mutateUserReports(
+          user.id,
+          (current) =>
+            upsertReportInList(current, {
+              ...savedReport,
+              is_optimistic: false,
+            }, [optimisticReportId]),
+          false
+        );
 
         if (savedReport.id !== reportIdFromUrl) {
-          router.replace(`/editor/${templateId}?reportId=${savedReport.id}`, {
+          router.replace(buildEditorRoute(templateId, savedReport.id), {
             scroll: false,
           });
         }
@@ -514,6 +630,8 @@ export default function EditorPage() {
               ? error.message
               : "Unable to autosave this report."
           );
+          setQueuedSaveAt(null);
+          void mutateUserReports(user.id);
         }
       } finally {
         if (!cancelled) {
@@ -537,10 +655,26 @@ export default function EditorPage() {
     user?.id,
   ]);
 
+  useEffect(() => {
+    if (isLoading || !templateId) {
+      return;
+    }
+
+    writeLastEditorPath(currentPath, user?.id);
+  }, [currentPath, isLoading, templateId, user?.id]);
+
+  const hasQueuedCloudChanges = Boolean(
+    user?.id && draftSignature && draftSignature !== lastSavedSignatureRef.current
+  );
+
   const handleExportDocx = useCallback(async () => {
     setIsExporting(true);
     setActionError(null);
     try {
+      if (!backendBaseUrl) {
+        throw new Error("Export service is not configured for this environment.");
+      }
+
       const safeBlocks = ensureDocumentBlocks(blocks);
       const { blocks: backendBlocks, images: imageLookup } =
         documentBlocksToBackend(safeBlocks, images, titlePage);
@@ -997,6 +1131,21 @@ export default function EditorPage() {
             Unable to open editor
           </p>
           <p className="mt-2 text-sm text-red-700 dark:text-red-300">{loadError}</p>
+          <div className="mt-5 flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => router.refresh()}
+              className="rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-red-700"
+            >
+              Retry
+            </button>
+            <Link
+              href={TEMPLATES_ROUTE}
+              className="rounded-xl border border-red-200 bg-white px-4 py-2.5 text-sm font-semibold text-red-700 transition hover:bg-red-100 dark:border-red-900 dark:bg-slate-950 dark:text-red-300 dark:hover:bg-red-950/40"
+            >
+              Back to Templates
+            </Link>
+          </div>
         </div>
       </main>
     );
@@ -1086,7 +1235,7 @@ export default function EditorPage() {
               <div className="border-b border-slate-200 px-4 py-4 dark:border-slate-800">
                 <div className="flex flex-wrap items-center gap-3">
                   <Link
-                    href="/templates"
+                    href={TEMPLATES_ROUTE}
                     className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
                   >
                     <ArrowLeft className="h-4 w-4" />
@@ -1115,10 +1264,11 @@ export default function EditorPage() {
                     value={documentSettings.fontFamily}
                     onChange={(event) => {
                       const nextFont = event.target.value;
-                      setDocumentSettings((current) => ({
-                        ...current,
-                        fontFamily: nextFont,
-                      }));
+                      setDocumentSettings((current) =>
+                        patchDocumentSettings(current, {
+                          fontFamily: nextFont,
+                        })
+                      );
                       setFontFamilies((current) =>
                         normalizeFontLibrary([nextFont, ...current])
                       );
@@ -1134,11 +1284,12 @@ export default function EditorPage() {
                   <select
                     value={documentSettings.paragraphAlign}
                     onChange={(event) =>
-                      setDocumentSettings((current) => ({
-                        ...current,
-                        paragraphAlign:
+                      setDocumentSettings((current) =>
+                        patchDocumentSettings(current, {
+                          paragraphAlign:
                           event.target.value as DocumentStyleSettings["paragraphAlign"],
-                      }))
+                        })
+                      )
                     }
                     className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-blue-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
                   >
@@ -1150,10 +1301,11 @@ export default function EditorPage() {
                   <select
                     value={String(documentSettings.lineSpacing)}
                     onChange={(event) =>
-                      setDocumentSettings((current) => ({
-                        ...current,
-                        lineSpacing: Number(event.target.value),
-                      }))
+                      setDocumentSettings((current) =>
+                        patchDocumentSettings(current, {
+                          lineSpacing: Number(event.target.value),
+                        })
+                      )
                     }
                     className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-blue-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100"
                   >
@@ -1209,6 +1361,10 @@ export default function EditorPage() {
                     {user
                       ? isSavingReport
                         ? "Saving to history..."
+                        : hasQueuedCloudChanges
+                          ? queuedSaveAt
+                            ? "Changes queued for autosave..."
+                            : "Autosave standing by..."
                         : formatSavedTime(lastSavedAt)
                       : "Guest draft saved on this device"}
                   </div>

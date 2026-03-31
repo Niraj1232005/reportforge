@@ -2,6 +2,14 @@
 
 import { ArrowUp, Github, Linkedin, Twitter } from "lucide-react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { useAuth } from "@/components/AuthProvider";
+import { useLastEditorPath } from "@/hooks/useLastEditorPath";
+import {
+  ABOUT_ROUTE,
+  HOME_ROUTE,
+  TEMPLATES_ROUTE,
+} from "@/lib/routes";
 
 const socialLinks = [
   {
@@ -22,6 +30,10 @@ const socialLinks = [
 ];
 
 export default function AppFooter() {
+  const pathname = usePathname();
+  const { user } = useAuth();
+  const lastEditorPath = useLastEditorPath(pathname, user?.id);
+
   return (
     <footer className="border-t border-slate-200/80 bg-white/85 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-950/70">
       <div className="mx-auto max-w-7xl px-6 py-12 md:px-10">
@@ -42,13 +54,16 @@ export default function AppFooter() {
           <div>
             <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Product</h3>
             <div className="mt-3 space-y-2 text-sm text-slate-600 dark:text-slate-400">
-              <Link href="/templates" className="block transition hover:text-blue-600 dark:hover:text-blue-400">
+              <Link href={HOME_ROUTE} className="block transition hover:text-blue-600 dark:hover:text-blue-400">
+                Home
+              </Link>
+              <Link href={TEMPLATES_ROUTE} className="block transition hover:text-blue-600 dark:hover:text-blue-400">
                 Templates
               </Link>
-              <Link href="/editor/research-report" className="block transition hover:text-blue-600 dark:hover:text-blue-400">
+              <Link href={lastEditorPath ?? TEMPLATES_ROUTE} className="block transition hover:text-blue-600 dark:hover:text-blue-400">
                 Editor
               </Link>
-              <Link href="/#about" className="block transition hover:text-blue-600 dark:hover:text-blue-400">
+              <Link href={ABOUT_ROUTE} className="block transition hover:text-blue-600 dark:hover:text-blue-400">
                 About
               </Link>
             </div>

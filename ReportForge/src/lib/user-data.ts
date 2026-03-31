@@ -2,7 +2,12 @@ import type { User } from "@supabase/supabase-js";
 import { DEFAULT_FONT_LIBRARY } from "@/lib/document-settings";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 import { sanitizeSingleLineText } from "@/lib/sanitize";
-import type { EditorDraftData, ReportRecord, UserProfile } from "@/types/editor";
+import type {
+  EditorDraftData,
+  ProfileUpdateInput,
+  ReportRecord,
+  UserProfile,
+} from "@/types/editor";
 
 const PROFILE_FIELDS =
   "id, full_name, college_name, default_font, created_at, updated_at";
@@ -69,13 +74,13 @@ export const getProfileForUser = async (user: User): Promise<UserProfile> => {
 
 export const updateProfileForUser = async (
   userId: string,
-  profile: Pick<UserProfile, "full_name" | "college_name" | "default_font">
+  profile: ProfileUpdateInput
 ): Promise<UserProfile> => {
   const client = ensureSupabase();
   const payload = {
     id: userId,
     full_name: sanitizeSingleLineText(profile.full_name, "ReportForge User", 120),
-    college_name: sanitizeSingleLineText(profile.college_name, "", 160),
+    college_name: sanitizeSingleLineText(profile.college_name ?? "", "", 160),
     default_font: sanitizeSingleLineText(
       profile.default_font,
       DEFAULT_FONT_LIBRARY[0],

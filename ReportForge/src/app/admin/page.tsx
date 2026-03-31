@@ -9,6 +9,7 @@ import {
   DEFAULT_DOCUMENT_SETTINGS,
   DEFAULT_FONT_LIBRARY,
   normalizeFontLibrary,
+  patchDocumentSettings,
   readFontLibraryFromStorage,
   writeFontLibraryToStorage,
 } from "@/lib/document-settings";
@@ -246,7 +247,11 @@ export default function AdminPage() {
     });
 
     if (style.fontFamily === fontName) {
-      setStyle((current) => ({ ...current, fontFamily: DEFAULT_DOCUMENT_SETTINGS.fontFamily }));
+      setStyle((current) =>
+        patchDocumentSettings(current, {
+          fontFamily: DEFAULT_DOCUMENT_SETTINGS.fontFamily,
+        })
+      );
     }
   };
 
@@ -426,7 +431,11 @@ export default function AdminPage() {
     setDescription(template.description ?? "");
     const structure = toTemplateStructure(template.structure);
     setSections(sectionsFromStructure(structure));
-    setStyle(structure.style ?? defaultStyleSettings);
+    setStyle(
+      structure.style
+        ? patchDocumentSettings(defaultStyleSettings, structure.style)
+        : defaultStyleSettings
+    );
     setCoverFields(structure.coverFields ?? defaultCoverFields);
     setCoverTemplate(structure.coverTemplate ?? defaultCoverTemplate);
     setFontLibrary(normalizeFontLibrary(structure.fonts ?? fontLibrary));
@@ -620,10 +629,11 @@ export default function AdminPage() {
                   <button
                     type="button"
                     onClick={() =>
-                      setStyle((current) => ({
-                        ...current,
+                      setStyle((current) =>
+                        patchDocumentSettings(current, {
                         fontFamily: DEFAULT_DOCUMENT_SETTINGS.fontFamily,
-                      }))
+                        })
+                      )
                     }
                     className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
                   >
@@ -655,7 +665,11 @@ export default function AdminPage() {
                     >
                       <button
                         type="button"
-                        onClick={() => setStyle((current) => ({ ...current, fontFamily: font }))}
+                        onClick={() =>
+                          setStyle((current) =>
+                            patchDocumentSettings(current, { fontFamily: font })
+                          )
+                        }
                         className="font-semibold"
                       >
                         {font}
@@ -688,7 +702,11 @@ export default function AdminPage() {
                     <select
                       value={style.fontFamily}
                       onChange={(event) =>
-                        setStyle((current) => ({ ...current, fontFamily: event.target.value }))
+                        setStyle((current) =>
+                          patchDocumentSettings(current, {
+                            fontFamily: event.target.value,
+                          })
+                        )
                       }
                       className="w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900 outline-none transition focus:border-slate-500 focus:ring-1 focus:ring-slate-200"
                     >
@@ -709,10 +727,11 @@ export default function AdminPage() {
                       max={18}
                       value={style.bodyFontSize}
                       onChange={(event) =>
-                        setStyle((current) => ({
-                          ...current,
+                        setStyle((current) =>
+                          patchDocumentSettings(current, {
                           bodyFontSize: Number(event.target.value) || 12,
-                        }))
+                        })
+                        )
                       }
                       className="w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900 outline-none transition focus:border-slate-500 focus:ring-1 focus:ring-slate-200"
                     />
@@ -727,10 +746,11 @@ export default function AdminPage() {
                       max={28}
                       value={style.heading1Size}
                       onChange={(event) =>
-                        setStyle((current) => ({
-                          ...current,
+                        setStyle((current) =>
+                          patchDocumentSettings(current, {
                           heading1Size: Number(event.target.value) || 18,
-                        }))
+                        })
+                        )
                       }
                       className="w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900 outline-none transition focus:border-slate-500 focus:ring-1 focus:ring-slate-200"
                     />
@@ -745,10 +765,11 @@ export default function AdminPage() {
                       max={24}
                       value={style.heading2Size}
                       onChange={(event) =>
-                        setStyle((current) => ({
-                          ...current,
+                        setStyle((current) =>
+                          patchDocumentSettings(current, {
                           heading2Size: Number(event.target.value) || 16,
-                        }))
+                        })
+                        )
                       }
                       className="w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900 outline-none transition focus:border-slate-500 focus:ring-1 focus:ring-slate-200"
                     />
@@ -763,10 +784,11 @@ export default function AdminPage() {
                       max={20}
                       value={style.heading3Size}
                       onChange={(event) =>
-                        setStyle((current) => ({
-                          ...current,
+                        setStyle((current) =>
+                          patchDocumentSettings(current, {
                           heading3Size: Number(event.target.value) || 14,
-                        }))
+                        })
+                        )
                       }
                       className="w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900 outline-none transition focus:border-slate-500 focus:ring-1 focus:ring-slate-200"
                     />
@@ -778,10 +800,11 @@ export default function AdminPage() {
                     <select
                       value={style.paragraphAlign}
                       onChange={(event) =>
-                        setStyle((current) => ({
-                          ...current,
+                        setStyle((current) =>
+                          patchDocumentSettings(current, {
                           paragraphAlign: event.target.value as TemplateStyleSettings["paragraphAlign"],
-                        }))
+                        })
+                        )
                       }
                       className="w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900 outline-none transition focus:border-slate-500 focus:ring-1 focus:ring-slate-200"
                     >
@@ -802,10 +825,11 @@ export default function AdminPage() {
                       step={0.1}
                       value={style.lineSpacing}
                       onChange={(event) =>
-                        setStyle((current) => ({
-                          ...current,
+                        setStyle((current) =>
+                          patchDocumentSettings(current, {
                           lineSpacing: Number(event.target.value) || 1.5,
-                        }))
+                        })
+                        )
                       }
                       className="w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900 outline-none transition focus:border-slate-500 focus:ring-1 focus:ring-slate-200"
                     />

@@ -11,7 +11,14 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { Download, Maximize2, Minimize2, PanelsLeftRight, ZoomIn, ZoomOut } from "lucide-react";
+import {
+  Download,
+  Maximize2,
+  Minimize2,
+  PanelsLeftRight,
+  ZoomIn,
+  ZoomOut,
+} from "lucide-react";
 import {
   buildHeadingNumberLookup,
   extractOutline,
@@ -23,14 +30,15 @@ import {
   countStaticDocumentPages,
   normalizeDocumentStructureSettings,
 } from "@/lib/document-config";
-import { normalizeDocumentSettings } from "@/lib/document-settings";
 import {
-  A4_HEIGHT_MM,
-  A4_HEIGHT_PX,
-  A4_WIDTH_MM,
+  getHeadingSize,
+  normalizeDocumentSettings,
+  ptToPx,
+} from "@/lib/document-settings";
+import {
   getBlockFontSizePt,
-  getDocumentMarginPx,
   getDocumentFontFamily,
+  getDocumentLayoutMetrics,
 } from "@/lib/document-schema";
 import type {
   DocumentBlock,
@@ -57,7 +65,12 @@ interface PreviewPaneProps {
   editorDrawerOpen?: boolean;
   onSetActiveBlock?: (blockId: string) => void;
   onUpdateRichBlock?: (blockId: string, html: string) => void;
-  onUpdateTableCell?: (blockId: string, rowIndex: number, colIndex: number, value: string) => void;
+  onUpdateTableCell?: (
+    blockId: string,
+    rowIndex: number,
+    colIndex: number,
+    value: string
+  ) => void;
   onToggleFullscreen?: () => void;
   onToggleEditorDrawer?: () => void;
   onExportDocx: () => void;
@@ -119,7 +132,7 @@ function EditablePreviewHtml({
 function PreviewPane({
   blocks,
   images,
-  commentsByBlock,
+  commentsByBlock: _commentsByBlock,
   documentTitle,
   titlePage,
   documentSettings,
@@ -144,12 +157,31 @@ function PreviewPane({
     () => normalizeDocumentStructureSettings(documentStructure),
     [documentStructure]
   );
+  const layout = useMemo(() => getDocumentLayoutMetrics(settings), [settings]);
   const [zoom, setZoom] = useState(fullscreen ? 100 : 90);
+  void _commentsByBlock;
 
+  const contentBlocks = useMemo(
+    () =>
+      blocks.filter(
+        (block) =>
+          block.type !== "header" &&
+          block.type !== "footer" &&
+          block.type !== "reference" &&
+          block.type !== "footnote"
+      ),
+    [blocks]
+  );
   const outline = useMemo(() => extractOutline(blocks), [blocks]);
   const headingLookup = useMemo(() => buildHeadingNumberLookup(blocks), [blocks]);
-  const pages = useMemo(() => splitBlocksByPageContent(blocks, settings), [blocks, settings]);
-  const documentFontFamily = useMemo(() => getDocumentFontFamily(settings), [settings]);
+  const pages = useMemo(
+    () => splitBlocksByPageContent(contentBlocks, settings),
+    [contentBlocks, settings]
+  );
+  const documentFontFamily = useMemo(
+    () => getDocumentFontFamily(settings),
+    [settings]
+  );
 
   const headerText = useMemo(() => {
     if (headerTextOverride !== undefined) {
@@ -185,24 +217,20 @@ function PreviewPane({
     return lookup;
   }, [pages, staticPages]);
 
-  const renderComments = (blockId: string) => {
-    const comments = commentsByBlock[blockId] ?? [];
-    if (!comments.length) {
-      return null;
-    }
+  const previewSurfaceVariables = useMemo<CSSProperties>(
+    () =>
+      ({
+        "--font-document": documentFontFamily,
+        "--rf-paragraph-space": `${settings.spacing.paragraphAfterPt}pt`,
+        "--rf-list-space": `${settings.spacing.listAfterPt}pt`,
+        "--rf-quote-space": `${settings.spacing.quoteAfterPt}pt`,
+        "--rf-caption-font-size": `${settings.spacing.captionFontSizePt}pt`,
+      }) as CSSProperties,
+    [documentFontFamily, settings]
+  );
 
-    return (
-      <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-slate-700">
-        <p className="font-semibold text-amber-900">Comments</p>
-        <ul className="mt-1 space-y-1">
-          {comments.map((comment) => (
-            <li key={comment.id} className={comment.resolved ? "opacity-60 line-through" : ""}>
-              {comment.author}: {comment.text}
-            </li>
-          ))}
-        </ul>
-      </div>
-    );
+  const renderComments = () => {
+    return null;
   };
 
   const renderPageShell = (
@@ -211,33 +239,50 @@ function PreviewPane({
     options?: { hideHeader?: boolean }
   ) => (
     <article
-      className="rf-preview-page mx-auto flex flex-col bg-white text-slate-900"
+      className="rf-preview-page relative mx-auto overflow-hidden bg-white text-slate-900"
       style={{
-        width: `${A4_WIDTH_MM}mm`,
-        minHeight: `${A4_HEIGHT_MM}mm`,
-        height: `${A4_HEIGHT_MM}mm`,
+        width: `${layout.pageWidthMm}mm`,
+        minHeight: `${layout.pageHeightMm}mm`,
+        height: `${layout.pageHeightMm}mm`,
         transform: `scale(${zoomRatio})`,
         transformOrigin: "top center",
-        paddingTop: getDocumentMarginPx(settings, "top"),
-        paddingRight: getDocumentMarginPx(settings, "right"),
-        paddingBottom: getDocumentMarginPx(settings, "bottom"),
-        paddingLeft: getDocumentMarginPx(settings, "left"),
         fontFamily: documentFontFamily,
         lineHeight: settings.lineSpacing,
       }}
     >
       <div
-        className="mb-6 min-h-5 text-center text-slate-500"
-        style={{ fontSize: `${Math.max(settings.bodyFontSize - 2, 10)}pt` }}
+        className="pointer-events-none absolute text-center text-slate-500"
+        style={{
+          top: Math.max(10, layout.marginsPx.top * 0.28),
+          left: layout.marginsPx.left,
+          right: layout.marginsPx.right,
+          fontSize: `${settings.spacing.headerFooterFontSizePt}pt`,
+        }}
       >
         {options?.hideHeader ? "\u00A0" : headerText || "\u00A0"}
       </div>
 
-      <div className="flex-1">{content}</div>
+      <div
+        className="absolute overflow-hidden"
+        style={{
+          top: layout.marginsPx.top,
+          left: layout.marginsPx.left,
+          width: layout.contentWidthPx,
+          height: layout.contentHeightPx,
+          ...previewSurfaceVariables,
+        }}
+      >
+        {content}
+      </div>
 
       <div
-        className="mt-8 flex items-center justify-between text-slate-500"
-        style={{ fontSize: `${Math.max(settings.bodyFontSize - 2, 10)}pt` }}
+        className="pointer-events-none absolute flex items-center justify-between text-slate-500"
+        style={{
+          bottom: Math.max(10, layout.marginsPx.bottom * 0.28),
+          left: layout.marginsPx.left,
+          right: layout.marginsPx.right,
+          fontSize: `${settings.spacing.headerFooterFontSizePt}pt`,
+        }}
       >
         <span>{footerText || "\u00A0"}</span>
         <span>Page {pageNumber}</span>
@@ -247,7 +292,8 @@ function PreviewPane({
 
   const renderTitlePage = (pageNumber: number) => {
     const logoImage = titlePage.logoImageId ? images[titlePage.logoImageId] : null;
-    const logoWidth = Math.min(280, Math.max(92, (titlePage.logoWidth || 40) * 4.2));
+    const logoWidthPercent = Math.max(15, Math.min(90, titlePage.logoWidth || 40));
+    const logoWidthPx = layout.contentWidthPx * (logoWidthPercent / 100);
 
     return renderPageShell(
       pageNumber,
@@ -256,54 +302,86 @@ function PreviewPane({
           <img
             src={toImageDataUrl(logoImage)}
             alt="Institution logo"
-            style={{ width: logoWidth, maxWidth: "100%" }}
-            className="mb-8 h-auto"
+            style={{
+              width: logoWidthPx,
+              maxWidth: "100%",
+              marginBottom: layout.titlePage.logoAfterPx,
+            }}
+            className="h-auto"
           />
         ) : null}
         {titlePage.eyebrow ? (
           <p
             className="text-slate-600"
-            style={{ fontSize: `${Math.max(settings.bodyFontSize - 1, 10)}pt`, fontWeight: 700 }}
+            style={{
+              fontSize: `${settings.spacing.titlePage.eyebrowFontSizePt}pt`,
+              fontWeight: 700,
+              marginBottom: layout.titlePage.eyebrowAfterPx,
+            }}
           >
             {titlePage.eyebrow}
           </p>
         ) : null}
         <p
-          className="mt-3 text-slate-700"
-          style={{ fontSize: `${settings.heading3Size}pt`, fontWeight: 700 }}
+          className="text-slate-700"
+          style={{
+            fontSize: `${getHeadingSize(settings, 3)}pt`,
+            fontWeight: 700,
+            marginBottom: layout.titlePage.collegeAfterPx,
+          }}
         >
           {titlePage.collegeName || "College Name"}
         </p>
         <h1
-          className="mt-5 text-slate-900"
+          className="text-slate-900"
           style={{
-            fontSize: `${settings.heading1Size + 4}pt`,
+            fontSize: `${getHeadingSize(settings, "title")}pt`,
             fontWeight: 700,
             letterSpacing: "-0.02em",
+            marginBottom: layout.titlePage.titleAfterPx,
           }}
         >
           {documentTitle || "Report"}
         </h1>
-        <p className="mt-8 text-slate-700" style={{ fontSize: `${settings.bodyFontSize}pt` }}>
+        <p
+          className="text-slate-700"
+          style={{
+            fontSize: `${settings.bodyFontSize}pt`,
+            marginBottom: layout.titlePage.studentAfterPx,
+          }}
+        >
           {titlePage.studentName || "Student Name"}
         </p>
         {titlePage.course ? (
-          <p className="mt-2 text-slate-600" style={{ fontSize: `${settings.bodyFontSize - 1}pt` }}>
+          <p
+            className="text-slate-600"
+            style={{
+              fontSize: `${settings.spacing.titlePage.courseFontSizePt}pt`,
+              marginBottom: layout.titlePage.courseAfterPx,
+            }}
+          >
             {titlePage.course}
           </p>
         ) : null}
         {titlePage.subtitle ? (
           <p
-            className="mt-8 max-w-[32rem] text-slate-600"
-            style={{ fontSize: `${settings.bodyFontSize - 1}pt` }}
+            className="max-w-[32rem] text-slate-600"
+            style={{
+              fontSize: `${settings.spacing.titlePage.subtitleFontSizePt}pt`,
+              marginTop: layout.titlePage.subtitleBeforePx,
+              marginBottom: layout.titlePage.subtitleAfterPx,
+            }}
           >
             {titlePage.subtitle}
           </p>
         ) : null}
         {titlePage.note ? (
           <p
-            className="mt-3 max-w-[30rem] text-slate-500"
-            style={{ fontSize: `${Math.max(settings.bodyFontSize - 2, 10)}pt` }}
+            className="max-w-[30rem] text-slate-500"
+            style={{
+              fontSize: `${settings.spacing.titlePage.noteFontSizePt}pt`,
+              marginBottom: layout.titlePage.noteAfterPx,
+            }}
           >
             {titlePage.note}
           </p>
@@ -318,8 +396,12 @@ function PreviewPane({
       pageNumber,
       <section>
         <h2
-          className="mb-8 text-center text-slate-900"
-          style={{ fontSize: `${settings.heading1Size}pt`, fontWeight: 700 }}
+          className="text-center text-slate-900"
+          style={{
+            fontSize: `${getHeadingSize(settings, 1)}pt`,
+            fontWeight: 700,
+            marginBottom: layout.headingAfterPx,
+          }}
         >
           Table of Contents
         </h2>
@@ -356,22 +438,31 @@ function PreviewPane({
 
   const renderDocumentBlock = (block: DocumentBlock) => {
     const activeClass =
-      activeBlockId === block.id ? "ring-2 ring-blue-200 bg-blue-50/50" : "hover:bg-slate-50/70";
+      activeBlockId === block.id
+        ? "rounded-md shadow-[0_0_0_2px_rgba(59,130,246,0.28)]"
+        : "rounded-md transition hover:shadow-[0_0_0_1px_rgba(148,163,184,0.35)]";
 
     if (block.type === "heading1" || block.type === "heading2" || block.type === "heading3") {
       const number = headingLookup[block.id];
+      const headingSizePt = getBlockFontSizePt(settings, block.type);
+
       return (
         <div
           key={block.id}
-          className={`mb-4 rounded-md px-2 py-1 transition ${activeClass}`}
+          className={activeClass}
           data-preview-block-id={block.id}
+          style={{ marginBottom: layout.headingAfterPx }}
           onClick={() => onSetActiveBlock?.(block.id)}
         >
           <div className="flex items-start gap-2">
             {number ? (
               <span
-                className="pt-0.5 font-semibold text-slate-500"
-                style={{ fontSize: `${Math.max(settings.bodyFontSize - 1, 10)}pt` }}
+                className="text-slate-900"
+                style={{
+                  fontSize: `${headingSizePt}pt`,
+                  fontWeight: 700,
+                  lineHeight: 1.3,
+                }}
               >
                 {number}
               </span>
@@ -383,14 +474,14 @@ function PreviewPane({
               onUpdate={onUpdateRichBlock}
               className="min-w-0 flex-1 outline-none"
               style={{
-                fontSize: `${getBlockFontSizePt(settings, block.type)}pt`,
+                fontSize: `${headingSizePt}pt`,
                 fontWeight: 700,
                 lineHeight: 1.3,
                 color: "#0f172a",
               }}
             />
           </div>
-          {renderComments(block.id)}
+          {renderComments()}
         </div>
       );
     }
@@ -406,8 +497,16 @@ function PreviewPane({
       return (
         <div
           key={block.id}
-          className={`mb-3 rounded-md px-2 py-1 transition ${activeClass}`}
+          className={activeClass}
           data-preview-block-id={block.id}
+          style={{
+            marginBottom:
+              block.type === "quote" ? layout.quoteAfterPx : layout.paragraphAfterPx,
+            marginLeft:
+              block.type === "quote" ? `${settings.spacing.quoteIndentLeftIn}in` : undefined,
+            marginRight:
+              block.type === "quote" ? `${settings.spacing.quoteIndentRightIn}in` : undefined,
+          }}
           onClick={() => onSetActiveBlock?.(block.id)}
         >
           <EditablePreviewHtml
@@ -415,17 +514,16 @@ function PreviewPane({
             html={block.html || "<p></p>"}
             onFocusBlock={onSetActiveBlock}
             onUpdate={onUpdateRichBlock}
-            className={`doc-rich-preview outline-none ${
-              block.type === "quote" ? "rounded-lg bg-slate-50 px-4 py-3" : ""
-            }`}
+            className="doc-rich-preview outline-none"
             style={{
               fontFamily: documentFontFamily,
               fontSize: `${settings.bodyFontSize}pt`,
+              fontStyle: block.type === "quote" ? "italic" : "normal",
               lineHeight: settings.lineSpacing,
               textAlign: settings.paragraphAlign,
             }}
           />
-          {renderComments(block.id)}
+          {renderComments()}
         </div>
       );
     }
@@ -434,14 +532,25 @@ function PreviewPane({
       return (
         <div
           key={block.id}
-          className={`mb-3 rounded-md px-2 py-1 transition ${activeClass}`}
+          className={activeClass}
           data-preview-block-id={block.id}
+          style={{ marginBottom: layout.codeAfterPx }}
           onClick={() => onSetActiveBlock?.(block.id)}
         >
-          <pre className="overflow-x-auto rounded-xl border border-slate-200 bg-slate-950 px-4 py-3 text-[12px] leading-6 text-slate-100">
+          <pre
+            style={{
+              margin: 0,
+              whiteSpace: "pre-wrap",
+              fontFamily: '"Courier New", monospace',
+              fontSize: "10pt",
+              lineHeight: settings.spacing.codeLineHeight,
+              paddingLeft: `${settings.spacing.quoteIndentLeftIn}in`,
+              paddingRight: `${settings.spacing.quoteIndentRightIn + 0.05}in`,
+            }}
+          >
             <code>{block.code || "// Empty code block"}</code>
           </pre>
-          {renderComments(block.id)}
+          {renderComments()}
         </div>
       );
     }
@@ -450,12 +559,16 @@ function PreviewPane({
       return (
         <div
           key={block.id}
-          className={`mb-4 rounded-md px-2 py-1 transition ${activeClass}`}
+          className={activeClass}
           data-preview-block-id={block.id}
+          style={{ marginBottom: layout.tableAfterPx }}
           onClick={() => onSetActiveBlock?.(block.id)}
         >
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse" style={{ fontSize: `${settings.bodyFontSize - 1}pt` }}>
+            <table
+              className="w-full border-collapse"
+              style={{ fontSize: `${settings.spacing.tableFontSizePt}pt` }}
+            >
               <tbody>
                 {block.rows.map((row, rowIndex) => (
                   <tr key={`${block.id}-row-${rowIndex}`}>
@@ -468,7 +581,12 @@ function PreviewPane({
                           value={cell}
                           onFocus={() => onSetActiveBlock?.(block.id)}
                           onChange={(event) =>
-                            onUpdateTableCell?.(block.id, rowIndex, colIndex, event.target.value)
+                            onUpdateTableCell?.(
+                              block.id,
+                              rowIndex,
+                              colIndex,
+                              event.target.value
+                            )
                           }
                           className="w-full bg-transparent text-slate-800 outline-none"
                         />
@@ -479,7 +597,7 @@ function PreviewPane({
               </tbody>
             </table>
           </div>
-          {renderComments(block.id)}
+          {renderComments()}
         </div>
       );
     }
@@ -488,7 +606,11 @@ function PreviewPane({
       const image = images[block.imageId];
       if (!image) {
         return (
-          <div key={block.id} className="mb-4 text-slate-500">
+          <div
+            key={block.id}
+            style={{ marginBottom: layout.imageAfterPx + layout.captionAfterPx }}
+            className="text-slate-500"
+          >
             [Image missing]
           </div>
         );
@@ -497,10 +619,11 @@ function PreviewPane({
       return (
         <figure
           key={block.id}
-          className={`mb-5 rounded-md px-2 py-2 transition ${activeClass}`}
+          className={activeClass}
           data-preview-block-id={block.id}
           onClick={() => onSetActiveBlock?.(block.id)}
           style={{
+            marginBottom: layout.captionAfterPx,
             textAlign:
               block.alignment === "left"
                 ? "left"
@@ -521,10 +644,16 @@ function PreviewPane({
                   : "mx-auto"
             }`}
           />
-          <figcaption className="mt-2 italic text-slate-600" style={{ fontSize: `${settings.bodyFontSize - 2}pt` }}>
+          <figcaption
+            className="italic text-slate-600"
+            style={{
+              fontSize: `${settings.spacing.captionFontSizePt}pt`,
+              marginTop: layout.imageAfterPx,
+            }}
+          >
             {block.caption || image.name}
           </figcaption>
-          {renderComments(block.id)}
+          {renderComments()}
         </figure>
       );
     }
@@ -533,13 +662,28 @@ function PreviewPane({
       return (
         <div
           key={block.id}
-          className={`mb-4 rounded-md px-2 py-1 transition ${activeClass}`}
+          className={activeClass}
           data-preview-block-id={block.id}
+          style={{ marginBottom: layout.equationAfterPx }}
           onClick={() => onSetActiveBlock?.(block.id)}
         >
-          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-center">
-            <p className="font-mono text-slate-900">{block.latex || "E = mc^2"}</p>
-            <p className="mt-1 text-xs text-slate-500">{block.label || "Equation"}</p>
+          <div className="text-center">
+            <p
+              className="font-mono text-slate-900"
+              style={{ fontSize: `${settings.bodyFontSize}pt`, margin: 0 }}
+            >
+              {block.latex || "E = mc^2"}
+            </p>
+            <p
+              className="text-slate-500"
+              style={{
+                fontSize: `${settings.spacing.footnoteFontSizePt}pt`,
+                fontStyle: "italic",
+                marginTop: ptToPx(4),
+              }}
+            >
+              {block.label || "Equation"}
+            </p>
           </div>
         </div>
       );
@@ -575,24 +719,37 @@ function PreviewPane({
   pages.forEach((pageBlocks, index) => {
     const isLastPage = index === pages.length - 1;
     const content = (
-      <section>
+      <section style={{ minHeight: "100%" }}>
         {pageBlocks.map(renderDocumentBlock)}
         {isLastPage ? (
           <>
             {blocks.some((block) => block.type === "reference") ? (
-              <section className="mt-8 border-t border-slate-300 pt-5">
+              <section style={{ marginTop: layout.headingAfterPx }}>
                 <h3
-                  className="mb-3 text-slate-900"
-                  style={{ fontSize: `${settings.heading3Size}pt`, fontWeight: 700 }}
+                  className="text-slate-900"
+                  style={{
+                    fontSize: `${getHeadingSize(settings, 1)}pt`,
+                    fontWeight: 700,
+                    marginBottom: layout.headingAfterPx,
+                  }}
                 >
                   References
                 </h3>
-                <ol className="list-decimal space-y-2 pl-6 text-slate-700" style={{ fontSize: `${settings.bodyFontSize - 1}pt` }}>
+                <ol
+                  className="list-decimal pl-6 text-slate-700"
+                  style={{
+                    fontSize: `${settings.spacing.referenceFontSizePt}pt`,
+                    lineHeight: settings.lineSpacing,
+                  }}
+                >
                   {blocks
                     .filter((block) => block.type === "reference")
                     .map((block) => (
-                      <li key={`preview-reference-${block.id}`}>
-                        {block.source}
+                      <li
+                        key={`preview-reference-${block.id}`}
+                        style={{ marginBottom: layout.referenceAfterPx }}
+                      >
+                        [{block.citationKey}] {block.source}
                       </li>
                     ))}
                 </ol>
@@ -600,18 +757,31 @@ function PreviewPane({
             ) : null}
 
             {blocks.some((block) => block.type === "footnote") ? (
-              <section className="mt-8 border-t border-slate-300 pt-5">
+              <section style={{ marginTop: layout.headingAfterPx }}>
                 <h3
-                  className="mb-3 text-slate-900"
-                  style={{ fontSize: `${settings.heading3Size}pt`, fontWeight: 700 }}
+                  className="text-slate-900"
+                  style={{
+                    fontSize: `${getHeadingSize(settings, 1)}pt`,
+                    fontWeight: 700,
+                    marginBottom: layout.headingAfterPx,
+                  }}
                 >
                   Footnotes
                 </h3>
-                <ol className="list-decimal space-y-2 pl-6 text-slate-700" style={{ fontSize: `${settings.bodyFontSize - 1}pt` }}>
+                <ol
+                  className="list-decimal pl-6 text-slate-700"
+                  style={{
+                    fontSize: `${settings.spacing.footnoteFontSizePt}pt`,
+                    lineHeight: settings.lineSpacing,
+                  }}
+                >
                   {blocks
                     .filter((block) => block.type === "footnote")
                     .map((block) => (
-                      <li key={`preview-footnote-${block.id}`}>
+                      <li
+                        key={`preview-footnote-${block.id}`}
+                        style={{ marginBottom: layout.footnoteAfterPx }}
+                      >
                         {block.content}
                       </li>
                     ))}
@@ -639,7 +809,7 @@ function PreviewPane({
               {fullscreen ? "Fullscreen Document" : "A4 Document View"}
             </h2>
             <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-              {pageCount} page{pageCount === 1 ? "" : "s"} with editable preview
+              {pageCount} page{pageCount === 1 ? "" : "s"} with export-matched layout
             </p>
           </div>
 
@@ -678,9 +848,17 @@ function PreviewPane({
                 type="button"
                 onClick={onToggleFullscreen}
                 className="rounded-xl border border-slate-200 bg-white p-2 text-slate-600 transition hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
-                aria-label={fullscreen ? "Exit fullscreen preview" : "Open fullscreen preview"}
+                aria-label={
+                  fullscreen
+                    ? "Exit fullscreen preview"
+                    : "Open fullscreen preview"
+                }
               >
-                {fullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+                {fullscreen ? (
+                  <Minimize2 className="h-4 w-4" />
+                ) : (
+                  <Maximize2 className="h-4 w-4" />
+                )}
               </button>
             ) : null}
             <button
@@ -695,12 +873,12 @@ function PreviewPane({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto bg-slate-100/90 px-4 py-6 dark:bg-slate-950">
-        <div className="space-y-7 pb-6">
+      <div className="rf-preview-stage min-h-0 flex-1 overflow-y-auto bg-slate-100/90 px-4 py-6 dark:bg-slate-950">
+        <div className="rf-preview-pages space-y-7 pb-6">
           {renderedPages.map((page, index) => (
             <div
               key={`preview-page-${index}`}
-              style={{ height: A4_HEIGHT_PX * zoomRatio + 42 }}
+              style={{ height: layout.pageHeightPx * zoomRatio + 42 }}
               className="mx-auto"
             >
               {page}

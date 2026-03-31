@@ -8,7 +8,7 @@
   --surface-muted: #f8fafc;
   --foreground: #0f172a;
   --muted: #64748b;
-  --border: #e2e8f0;
+  --border: rgba(148, 163, 184, 0.22);
   --accent: #2563eb;
   --accent-soft: rgba(37, 99, 235, 0.12);
   --shadow-sm: 0 10px 30px rgba(15, 23, 42, 0.06);
@@ -23,7 +23,7 @@
   --surface-muted: #0b1220;
   --foreground: #e2e8f0;
   --muted: #94a3b8;
-  --border: rgba(148, 163, 184, 0.18);
+  --border: rgba(148, 163, 184, 0.16);
   --accent: #60a5fa;
   --accent-soft: rgba(96, 165, 250, 0.16);
   --shadow-sm: 0 16px 40px rgba(2, 6, 23, 0.35);
@@ -75,6 +75,11 @@ body {
 a {
   color: inherit;
   text-decoration: none;
+}
+
+:where(a[href], button, [role="button"], input, select, textarea) {
+  transition-duration: 200ms;
+  transition-timing-function: ease-out;
 }
 
 .bg-app {
@@ -134,9 +139,13 @@ a {
   font-family: var(--font-document);
 }
 
+.doc-rich-preview {
+  font-family: var(--font-document, inherit);
+}
+
 .doc-rich p,
 .doc-rich-preview p {
-  margin: 0 0 0.75rem;
+  margin: 0 0 var(--rf-paragraph-space, 0.75rem);
 }
 
 .doc-rich p:last-child,
@@ -148,7 +157,7 @@ a {
 .doc-rich ol,
 .doc-rich-preview ul,
 .doc-rich-preview ol {
-  margin: 0 0 0.75rem 1.5rem;
+  margin: 0 0 var(--rf-list-space, 0.75rem) 1.5rem;
 }
 
 .doc-rich li,
@@ -158,7 +167,7 @@ a {
 
 .doc-rich blockquote,
 .doc-rich-preview blockquote {
-  margin: 0.75rem 0;
+  margin: 0 0 var(--rf-quote-space, 0.75rem);
   border-left: 3px solid #cbd5e1;
   padding-left: 0.9rem;
   color: #475569;
@@ -197,7 +206,7 @@ a {
 .doc-rich-preview figcaption {
   margin-top: 0.35rem;
   color: #64748b;
-  font-size: 0.82rem;
+  font-size: var(--rf-caption-font-size, 0.82rem);
   font-style: italic;
 }
 
@@ -232,6 +241,15 @@ a {
 }
 
 @media print {
+  body * {
+    visibility: hidden !important;
+  }
+
+  .rf-preview-print-root,
+  .rf-preview-print-root * {
+    visibility: visible !important;
+  }
+
   html,
   body {
     background: #ffffff !important;
@@ -259,8 +277,19 @@ a {
   }
 
   .rf-preview-print-root {
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
     overflow: visible !important;
     height: auto !important;
+    padding: 0 !important;
+  }
+
+  .rf-preview-stage,
+  .rf-preview-pages {
+    background: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
   }
 
   .rf-preview-page {

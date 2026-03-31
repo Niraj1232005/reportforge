@@ -25,10 +25,17 @@ import {
   clearBrowserSessionStorage,
   clearDraftCachesForLogin,
 } from "@/lib/editor-storage";
+import {
+  AUTH_CALLBACK_ROUTE,
+  DEFAULT_POST_LOGIN_REDIRECT,
+  HOME_ROUTE,
+  isEditorRoute,
+  isProtectedAppRoute,
+} from "@/lib/routes";
 import { sanitizeSafeRedirectPath } from "@/lib/sanitize";
 import { supabase } from "@/lib/supabase";
 import { getProfileForUser, updateProfileForUser } from "@/lib/user-data";
-import type { UserProfile } from "@/types/editor";
+import type { ProfileUpdateInput, UserProfile } from "@/types/editor";
 
 type AuthMode = "login" | "signup";
 type AuthPendingAction =
@@ -61,9 +68,7 @@ interface AuthContextValue {
   loginWithEmail: (email: string, password: string) => Promise<void>;
   continueAsGuest: () => void;
   refreshProfile: () => Promise<void>;
-  saveProfile: (
-    profile: Pick<UserProfile, "full_name" | "college_name" | "default_font">
-  ) => Promise<UserProfile>;
+  saveProfile: (profile: ProfileUpdateInput) => Promise<UserProfile>;
   logout: () => Promise<void>;
 }
 
@@ -88,7 +93,7 @@ const readPendingRedirect = () => {
   }
 
   const raw = window.sessionStorage.getItem(PENDING_AUTH_REDIRECT_KEY);
-  return sanitizeSafeRedirectPath(raw, "/templates");
+  return sanitizeSafeRedirectPath(raw, DEFAULT_POST_LOGIN_REDIRECT);
 };
 
 const writePendingRedirect = (value: string | null) => {
@@ -103,7 +108,7 @@ const writePendingRedirect = (value: string | null) => {
 
   window.sessionStorage.setItem(
     PENDING_AUTH_REDIRECT_KEY,
-    sanitizeSafeRedirectPath(value, "/templates")
+    sanitizeSafeRedirectPath(value, DEFAULT_POST_LOGIN_REDIRECT)
   );
 };
 
@@ -145,14 +150,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         open: true,
         mode: options?.mode ?? current.mode,
         redirectTo: sanitizeSafeRedirectPath(
-          options?.redirectTo ?? current.redirectTo ?? pathname,
-          "/templates"
+          options?.redirectTo ?? DEFAULT_POST_LOGIN_REDIRECT,
+          DEFAULT_POST_LOGIN_REDIRECT
         ),
         title: options?.title ?? DEFAULT_MODAL_TITLE,
         message: options?.message ?? DEFAULT_MODAL_MESSAGE,
       }));
     },
-    [pathname]
+    []
   );
 
   const requireAuth = useCallback(
@@ -185,11 +190,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         throw new Error("Sign in to update your profile.");
       }
 
-      const saved = await updateProfileForUser(user.id, nextProfile);
+      const saved = await updateProfileForUser(user.id, {
+        college_name: profile?.college_name ?? "",
+        ...nextProfile,
+      });
       setProfile(saved);
       return saved;
     },
-    [user]
+    [profile?.college_name, user]
   );
 
   const finalizeSignedInState = useCallback(
@@ -210,6 +218,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setModalState((current) => ({ ...current, open: false }));
 
       if (lastUserIdRef.current !== nextUser.id) {
+        setProfile(null);
         clearDraftCachesForLogin(nextUser.id);
         lastUserIdRef.current = nextUser.id;
       }
@@ -232,9 +241,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const redirectTo = readPendingRedirect();
       writePendingRedirect(null);
       const safeRedirect =
-        redirectTo && redirectTo !== "/auth/callback" ? redirectTo : "/templates";
+        redirectTo && redirectTo !== AUTH_CALLBACK_ROUTE
+          ? redirectTo
+          : DEFAULT_POST_LOGIN_REDIRECT;
 
-      if (pathname === "/auth/callback" || safeRedirect !== pathname) {
+      if (pathname === AUTH_CALLBACK_ROUTE || safeRedirect !== pathname) {
         router.replace(safeRedirect);
       }
     },
@@ -435,8 +446,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         variant: "info",
       });
 
-      if (pathname.startsWith("/editor/") || pathname.startsWith("/admin")) {
-        router.replace("/templates");
+      if (isEditorRoute(pathname) || isProtectedAppRoute(pathname)) {
+        router.replace(HOME_ROUTE);
       }
     } catch (error) {
       const message =

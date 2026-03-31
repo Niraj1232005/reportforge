@@ -1,0 +1,64 @@
+{
+  "fontFamily": "Times New Roman",
+  "bodyFontSize": 12,
+  "headingSizes": {
+    "title": 22,
+    "h1": 18,
+    "h2": 16,
+    "h3": 14
+  },
+  "paragraphAlign": "justify",
+  "lineSpacing": 1.5,
+  "margins": {
+    "top": 1,
+    "bottom": 1,
+    "left": 1,
+    "right": 1,
+    "unit": "in"
+  },
+  "page": {
+    "size": "A4",
+    "widthMm": 210,
+    "heightMm": 297
+  },
+  "pageBreakRules": {
+    "heading1StartsNewPage": true
+  },
+  "spacing": {
+    "paragraphAfterPt": 8,
+    "headingAfterPt": 8,
+    "listAfterPt": 8,
+    "quoteAfterPt": 8,
+    "quoteIndentLeftIn": 0.35,
+    "quoteIndentRightIn": 0.2,
+    "codeLineHeight": 1,
+    "codeAfterPt": 8,
+    "tableFontSizePt": 11,
+    "tableAfterPt": 8,
+    "imageAfterPt": 6,
+    "captionFontSizePt": 10,
+    "captionAfterPt": 10,
+    "headerFooterFontSizePt": 10,
+    "equationAfterPt": 8,
+    "referenceFontSizePt": 11,
+    "referenceAfterPt": 6,
+    "footnoteFontSizePt": 10,
+    "footnoteAfterPt": 4,
+    "commentAfterPt": 6,
+    "titlePage": {
+      "logoAfterPt": 14,
+      "eyebrowFontSizePt": 11,
+      "eyebrowAfterPt": 10,
+      "collegeAfterPt": 8,
+      "titleAfterPt": 10,
+      "studentAfterPt": 8,
+      "courseFontSizePt": 11,
+      "courseAfterPt": 8,
+      "subtitleFontSizePt": 11,
+      "subtitleBeforePt": 18,
+      "subtitleAfterPt": 8,
+      "noteFontSizePt": 10,
+      "noteAfterPt": 6
+    }
+  }
+}
